@@ -1,3 +1,8 @@
 .env
 node_modules
 .vercel
+
+# Large data files
+campus-optimizer/data/compiled.json
+pelican/data/thermostat-history.json
+pelican/data/history-stream/
