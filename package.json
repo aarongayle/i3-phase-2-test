@@ -1,0 +1,48 @@
+{
+  "name": "campus-optimizer-reports",
+  "version": "2.0.0",
+  "description": "CampusOptimizer Reporting System with Vercel Serverless Functions",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "deploy": "vercel",
+    "deploy:prod": "vercel --prod",
+    "co:compile": "node campus-optimizer/compile-data.js",
+    "co:report": "node campus-optimizer/generate-html.js",
+    "co:build": "pnpm co:compile && pnpm co:report",
+    "pelican:devices": "node pelican/pelican-api.js",
+    "precompute": "node scripts/precompute-reports.js"
+  },
+  "keywords": [
+    "campus-optimizer",
+    "vercel",
+    "serverless",
+    "react",
+    "reporting"
+  ],
+  "author": "",
+  "license": "ISC",
+  "packageManager": "pnpm@10.10.0",
+  "dependencies": {
+    "@google/genai": "^1.12.0",
+    "@vercel/kv": "^2.0.0",
+    "dotenv": "^17.2.2",
+    "express": "^5.1.0",
+    "llm-xlsx-parser": "^0.3.4",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.26.0",
+    "chart.js": "^4.4.3",
+    "react-chartjs-2": "^5.2.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.1",
+    "vite": "^5.4.0",
+    "tailwindcss": "^3.4.10",
+    "postcss": "^8.4.41",
+    "autoprefixer": "^10.4.20",
+    "vercel": "^48.2.9"
+  }
+}
