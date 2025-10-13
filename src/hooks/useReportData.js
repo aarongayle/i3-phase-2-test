@@ -6,12 +6,10 @@ export function useReportData(clientId) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [progress, setProgress] = useState({
-    cache: { progress: 0, message: "" },
-    devices: { progress: 0, message: "" },
-    dates: { progress: 0, message: "" },
-    "energy-expected": { progress: 0, message: "" },
-    "energy-actual": { progress: 0, message: "" },
+    metadata: { progress: 0, message: "" },
+    history: { progress: 0, message: "" },
     aggregation: { progress: 0, message: "" },
+    energy: { progress: 0, message: "" },
   });
   const abortControllerRef = useRef(null);
 
@@ -35,12 +33,10 @@ export function useReportData(clientId) {
         setLoading(true);
         setError(null);
         setProgress({
-          cache: { progress: 0, message: "" },
-          devices: { progress: 0, message: "" },
-          dates: { progress: 0, message: "" },
-          "energy-expected": { progress: 0, message: "" },
-          "energy-actual": { progress: 0, message: "" },
+          metadata: { progress: 0, message: "" },
+          history: { progress: 0, message: "" },
           aggregation: { progress: 0, message: "" },
+          energy: { progress: 0, message: "" },
         });
 
         const result = await fetchCompiledReportStream(
