@@ -130,13 +130,21 @@ phase-2/
 
 ### Local Development
 
+**Option 1: Use Vercel Dev Server (Recommended for API development)**
 ```bash
 # Start Vercel dev server (simulates serverless environment)
 vercel dev
+```
 
-# Or run frontend only
+**Option 2: Frontend Only with Hosted API (Recommended for frontend development)**
+```bash
+# Run frontend only, pointing to hosted Vercel API
+# Create .env.local file with:
+# VITE_API_BASE_URL=https://phase-2-tan.vercel.app/api
 pnpm dev
 ```
+
+The `.env.local` file (already in `.gitignore`) allows you to point your local frontend to the deployed Vercel API endpoints. This is useful when you only need to work on the frontend and don't want to run the serverless functions locally.
 
 ### Testing
 

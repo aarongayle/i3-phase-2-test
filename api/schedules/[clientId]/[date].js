@@ -3,7 +3,8 @@
 // ONE database query per request
 
 import { kv } from "@vercel/kv";
-import { getOptimalSchedules } from "../../../lib/co-client.js";
+
+const uri = `https://${process.env.CO_ENVIRONMENT}.idealimpactinc.com/api`;
 
 // Check if KV is available (has required env vars)
 const isKvAvailable = () => {
@@ -52,15 +53,47 @@ export default async function handler(req, res) {
     }
 
     // Fetch optimal schedules for this ONE date
-    const schedules = await getOptimalSchedules(Number(clientId), date);
+    // Use direct fetch to avoid rate limiting (this endpoint handles ONE request at a time)
+    const url = `${uri}/optimal-schedules?client=${clientId}&date=${date}`;
+    console.log(`[Schedules API] Fetching from URL: ${url}`);
+
+    const response = await fetch(url, {
+      headers: {
+        Authorization: `${process.env.CO_MASTER_KEY}`,
+      },
+    });
+
+    if (!response.ok) {
+      console.error(
+        `[Schedules API] ✗ HTTP ${response.status}: ${response.statusText}`
+      );
+      throw new Error(
+        `Failed to fetch schedules: ${response.status} ${response.statusText}`
+      );
+    }
+
+    const bodyText = await response.text();
+    console.log(
+      `[Schedules API] Response body length: ${bodyText.length} chars`
+    );
+
+    // Handle "no schedule" or empty response
+    if (bodyText === "no schedule" || bodyText === "" || bodyText === "null") {
+      console.log(
+        `[Schedules API] ✓ No schedules for date ${date}, returning empty array`
+      );
+      return res.status(200).json({ schedules: [] });
+    }
+
+    const schedules = JSON.parse(bodyText);
     console.log(`[Schedules API] ✓ Fetched ${schedules.length} schedules`);
 
-    // Cache for 5 minutes
+    // Cache for 1 hour (historical data doesn't change)
     if (isKvAvailable()) {
-      await kv.set(cacheKey, schedules, { ex: 300 });
+      await kv.set(cacheKey, schedules, { ex: 3600 });
       res.setHeader(
         "Cache-Control",
-        "s-maxage=300, stale-while-revalidate=600"
+        "s-maxage=3600, stale-while-revalidate=7200"
       );
     }
 

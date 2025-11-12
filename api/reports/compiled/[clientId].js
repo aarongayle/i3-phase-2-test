@@ -31,34 +31,48 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
-  const { clientId } = req.query;
+  const { clientId, pageIndex, pageSize } = req.query;
 
   try {
     if (!clientId) {
       return res.status(400).json({ error: "clientId is required" });
     }
 
-    console.log(`\n=== Starting request for clientId: ${clientId} ===`);
+    // Pagination parameters
+    const page = pageIndex !== undefined ? Number(pageIndex) : null;
+    const size = pageSize !== undefined ? Number(pageSize) : 10; // Default 10 dates per page
 
-    const cacheKey = `compiled:${clientId}`;
-    let data = null;
+    const isPaginated = page !== null;
 
-    // Check Vercel KV cache first (only if available)
-    if (isKvAvailable()) {
-      console.log(`Checking cache...`);
-      data = await kv.get(cacheKey);
+    console.log(
+      `\n=== Starting request for clientId: ${clientId}${
+        isPaginated ? ` (page ${page}, size ${size})` : ""
+      } ===`
+    );
 
-      if (data) {
-        console.log(`✓ Cache hit! Returning cached data`);
-        return res.status(200).json({ ...data, cached: true });
+    // For paginated requests, don't check cache (each page is computed fresh)
+    // For non-paginated requests, check full cache
+    if (!isPaginated) {
+      const cacheKey = `compiled:${clientId}`;
+      let data = null;
+
+      // Check Vercel KV cache first (only if available)
+      if (isKvAvailable()) {
+        console.log(`Checking cache...`);
+        data = await kv.get(cacheKey);
+
+        if (data) {
+          console.log(`✓ Cache hit! Returning cached data`);
+          return res.status(200).json({ ...data, cached: true });
+        }
+
+        console.log(`Cache miss, will fetch fresh data`);
+      } else {
+        console.log(`KV not configured (normal for local dev)`);
       }
-
-      console.log(`Cache miss, will fetch fresh data`);
-    } else {
-      console.log(`KV not configured (normal for local dev)`);
     }
 
-    // Fetch data in parallel where possible to speed things up
+    // Fetch basic data
     console.log(`Fetching devices and dates in parallel...`);
     const [devices, dates] = await Promise.all([
       getDevices(Number(clientId)),
@@ -66,6 +80,48 @@ export default async function handler(req, res) {
     ]);
     console.log(`✓ Loaded ${devices.length} devices, ${dates.length} dates`);
 
+    // For paginated requests: return page info + device metrics for that page only
+    if (isPaginated) {
+      const totalPages = Math.ceil(dates.length / size);
+      const startIdx = page * size;
+      const endIdx = Math.min(startIdx + size, dates.length);
+      const pageeDates = dates.slice(startIdx, endIdx);
+
+      console.log(
+        `Aggregating device metrics for page ${page} (dates ${startIdx}-${endIdx})...`
+      );
+      const startTime = Date.now();
+      const deviceMetrics = await aggregationService.aggregateDeviceMetrics(
+        devices,
+        pageeDates,
+        Number(clientId)
+      );
+      const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+      console.log(`✓ Aggregation complete in ${duration}s`);
+
+      const data = {
+        meta: {
+          clientId: Number(clientId),
+          pageIndex: page,
+          pageSize: size,
+          totalPages,
+          totalDates: dates.length,
+          datesInPage: pageeDates.length,
+          startDate: pageeDates[0]?.report_date,
+          endDate: pageeDates[pageeDates.length - 1]?.report_date,
+          generatedAt: new Date().toISOString(),
+        },
+        devices: deviceMetrics,
+        isPageData: true,
+      };
+
+      console.log(
+        `=== Page request complete for clientId: ${clientId}, page ${page} ===\n`
+      );
+      return res.status(200).json(data);
+    }
+
+    // Non-paginated (legacy): fetch all energy data
     console.log(`Fetching energy data in parallel...`);
     const [energyExpected, energyActual] = await Promise.all([
       expectedEnergyUse(Number(clientId)),
@@ -84,7 +140,7 @@ export default async function handler(req, res) {
     console.log(`✓ Aggregation complete in ${duration}s`);
 
     // Build response
-    data = {
+    const data = {
       meta: {
         clientId: Number(clientId),
         reportsCount: dates.length,
@@ -101,6 +157,7 @@ export default async function handler(req, res) {
 
     // Cache for 5 minutes
     if (isKvAvailable()) {
+      const cacheKey = `compiled:${clientId}`;
       await kv.set(cacheKey, data, { ex: 300 });
       console.log(`✓ Cached for 5 minutes`);
       res.setHeader(

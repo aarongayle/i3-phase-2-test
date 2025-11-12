@@ -102,12 +102,12 @@ export default async function handler(req, res) {
       );
     }
 
-    // Cache for 5 minutes
+    // Cache for 1 hour (historical data doesn't change)
     if (isKvAvailable()) {
-      await kv.set(cacheKey, scheduleDetails, { ex: 300 });
+      await kv.set(cacheKey, scheduleDetails, { ex: 3600 });
       res.setHeader(
         "Cache-Control",
-        "s-maxage=300, stale-while-revalidate=600"
+        "s-maxage=3600, stale-while-revalidate=7200"
       );
     }
 
