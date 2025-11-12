@@ -1,5 +1,5 @@
 import dotenv from "dotenv";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 dotenv.config();
@@ -56,6 +56,124 @@ function getRangeFileName(selection, index = 0) {
   return `${startSegment}__${endSegment}__${indexSegment}.json`;
 }
 
+/**
+ * Extract date from timestamp string (format: "2025-08-30T00:01")
+ */
+function extractDateFromTimestamp(timestamp) {
+  if (!timestamp) return null;
+  const match = String(timestamp).match(/^(\d{4}-\d{2}-\d{2})/);
+  return match ? match[1] : null;
+}
+
+/**
+ * Group history entries by date and write to organized file structure
+ * Structure: {baseDir}/{siteSlug}/{serialNo}/{year}/{month}/{day}.json
+ */
+async function writeThermostatHistoryByDate({
+  baseDir,
+  siteSlug,
+  entry,
+  onEntryWritten,
+}) {
+  const serialNo = entry?.serialNo;
+  if (!serialNo) {
+    console.warn("history-stream:write:missing-serial", { entry });
+    return null;
+  }
+
+  const serialSegment = sanitizeFileSegment(serialNo, "unknown");
+
+  // Extract history records from entry
+  const historyRecords = Array.isArray(entry?.History) ? entry.History : [];
+  if (historyRecords.length === 0) {
+    return null;
+  }
+
+  // Group records by date
+  const recordsByDate = new Map();
+  for (const record of historyRecords) {
+    const date = extractDateFromTimestamp(record?.timestamp);
+    if (!date) continue;
+
+    if (!recordsByDate.has(date)) {
+      recordsByDate.set(date, []);
+    }
+    recordsByDate.get(date).push(record);
+  }
+
+  const writtenFiles = [];
+
+  // Write one file per date
+  for (const [date, records] of recordsByDate.entries()) {
+    const [year, month, day] = date.split("-");
+    const targetDir = path.resolve(
+      baseDir,
+      siteSlug,
+      serialSegment,
+      year,
+      month
+    );
+    await mkdir(targetDir, { recursive: true });
+
+    const fileName = `${day}.json`;
+    const targetPath = path.join(targetDir, fileName);
+
+    // Read existing file if it exists and merge
+    let existingRecords = [];
+    try {
+      const existingContent = await readFile(targetPath, "utf8");
+      const existingData = JSON.parse(existingContent);
+      existingRecords = Array.isArray(existingData) ? existingData : [];
+    } catch {
+      // File doesn't exist yet, that's fine
+    }
+
+    // Merge and deduplicate by timestamp
+    const recordMap = new Map();
+    for (const record of [...existingRecords, ...records]) {
+      const key = record.timestamp;
+      if (key && !recordMap.has(key)) {
+        recordMap.set(key, record);
+      }
+    }
+
+    const mergedRecords = Array.from(recordMap.values()).sort((a, b) => {
+      return (a.timestamp || "").localeCompare(b.timestamp || "");
+    });
+
+    const payload = JSON.stringify(mergedRecords, null, 2);
+    await writeFile(targetPath, payload, "utf8");
+
+    console.log("history-stream:write", {
+      siteSlug,
+      serialNo,
+      date,
+      entries: mergedRecords.length,
+      file: targetPath,
+    });
+
+    writtenFiles.push({
+      path: targetPath,
+      date,
+      entryCount: mergedRecords.length,
+    });
+
+    // Callback for metadata updates
+    if (typeof onEntryWritten === "function") {
+      await onEntryWritten({
+        siteSlug,
+        serialNo,
+        date,
+        entryCount: mergedRecords.length,
+        filePath: targetPath,
+      });
+    }
+  }
+
+  return writtenFiles;
+}
+
+// Keep old function for backward compatibility but mark as deprecated
 async function writeThermostatHistoryEntry({
   baseDir,
   siteSlug,
@@ -665,6 +783,8 @@ export async function fetchThermostatHistory({
   signal,
   onChunk,
   streamOutputDir,
+  onEntryWritten,
+  useDateOrganization = true, // New: use date-organized file structure
 }) {
   if (!siteSlug) {
     throw new Error("siteSlug is required.");
@@ -683,7 +803,7 @@ export async function fetchThermostatHistory({
     : null;
 
   const ranges = splitDateRange(startISO, endISO, chunkDays);
-  const collected = [];
+  let totalEntriesProcessed = 0;
 
   console.log("fetchThermostatHistory:prepared", {
     siteSlug,
@@ -691,6 +811,7 @@ export async function fetchThermostatHistory({
     serialNumbers: serialFilter,
     totalRanges: ranges.length,
     rangeSample: ranges[0],
+    useDateOrganization,
   });
 
   const normalizedStreamDir = streamOutputDir
@@ -729,15 +850,31 @@ export async function fetchThermostatHistory({
         streamRawToFile: rawResponseFile, // Stream chunks directly to file
         onHistory: normalizedStreamDir
           ? async (entry, rawEntry, meta) => {
-              await writeThermostatHistoryEntry({
-                baseDir: normalizedStreamDir,
-                siteSlug,
-                selection: range,
-                entry,
-                raw: rawEntry,
-                index: meta?.index ?? 0,
-              });
-              streamWritesForRange += 1;
+              if (useDateOrganization) {
+                // Use new date-organized writing
+                const writtenFiles = await writeThermostatHistoryByDate({
+                  baseDir: normalizedStreamDir,
+                  siteSlug,
+                  entry,
+                  onEntryWritten,
+                });
+                if (writtenFiles && writtenFiles.length > 0) {
+                  streamWritesForRange += writtenFiles.length;
+                  totalEntriesProcessed += entry?.History?.length || 0;
+                }
+              } else {
+                // Use old format for backward compatibility
+                await writeThermostatHistoryEntry({
+                  baseDir: normalizedStreamDir,
+                  siteSlug,
+                  selection: range,
+                  entry,
+                  raw: rawEntry,
+                  index: meta?.index ?? 0,
+                });
+                streamWritesForRange += 1;
+                totalEntriesProcessed += 1;
+              }
             }
           : undefined,
       }
@@ -761,8 +898,6 @@ export async function fetchThermostatHistory({
         )
       : history;
 
-    collected.push(...entries);
-
     // Fallback: if streaming did not write any files for this range, write now
     if (
       normalizedStreamDir &&
@@ -775,16 +910,26 @@ export async function fetchThermostatHistory({
       });
       for (let i = 0; i < entries.length; i += 1) {
         const entry = entries[i];
-        const rawEntry = JSON.stringify(entry);
-        await writeThermostatHistoryEntry({
-          baseDir: normalizedStreamDir,
-          siteSlug,
-          selection: range,
-          entry,
-          raw: rawEntry,
-          index: i,
-        });
+        if (useDateOrganization) {
+          await writeThermostatHistoryByDate({
+            baseDir: normalizedStreamDir,
+            siteSlug,
+            entry,
+            onEntryWritten,
+          });
+        } else {
+          const rawEntry = JSON.stringify(entry);
+          await writeThermostatHistoryEntry({
+            baseDir: normalizedStreamDir,
+            siteSlug,
+            selection: range,
+            entry,
+            raw: rawEntry,
+            index: i,
+          });
+        }
       }
+      totalEntriesProcessed += entries.length;
     }
 
     if (typeof onChunk === "function") {
@@ -799,10 +944,15 @@ export async function fetchThermostatHistory({
   console.log("fetchThermostatHistory:completed", {
     serialNumber,
     serialNumbers: serialFilter,
-    entries: collected.length,
+    entriesProcessed: totalEntriesProcessed,
   });
 
-  return collected;
+  // Return summary instead of full data array
+  return {
+    siteSlug,
+    entriesProcessed: totalEntriesProcessed,
+    rangesProcessed: ranges.length,
+  };
 }
 
 export { DEFAULT_HISTORY_FIELDS, DEFAULT_HISTORY_YEARS };

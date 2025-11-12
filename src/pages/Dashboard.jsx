@@ -15,7 +15,7 @@ import { useReportData } from "../hooks/useReportData";
 
 export default function Dashboard() {
   const { clientId: urlClientId } = useParams();
-  const [clientId, setClientId] = useState(urlClientId || "1420");
+  const [clientId, setClientId] = useState(urlClientId || "");
   const { data, loading, error, progress } = useReportData(clientId);
 
   const handleSubmit = (e) => {
@@ -55,6 +55,7 @@ export default function Dashboard() {
                   defaultValue={clientId}
                   className="shadow-sm focus:ring-blue-500 focus:border-blue-500 block w-full sm:text-sm border-gray-300 rounded-md px-4 py-2 border"
                   placeholder="Enter client ID (e.g., 1420)"
+                  required
                 />
               </div>
               <button

@@ -506,34 +506,39 @@ export async function fetchCompiledReportStream(clientId, onProgress, signal) {
     const historyResults = [];
     let completedCount = 0;
 
-    // Create all promises but track completion
-    const schedulePromises = sortedDates.map(async (date, i) => {
-      try {
-        const schedules = await fetchSchedulesForDate(clientId, date, signal);
-        completedCount++;
+    // Batch requests to avoid browser connection limits (process 20 at a time)
+    const BATCH_SIZE = 20;
+    for (let i = 0; i < sortedDates.length; i += BATCH_SIZE) {
+      const batch = sortedDates.slice(i, i + BATCH_SIZE);
+      const batchPromises = batch.map(async (date) => {
+        try {
+          const schedules = await fetchSchedulesForDate(clientId, date, signal);
+          completedCount++;
 
-        // Update progress after each request completes
-        if (
-          completedCount % 10 === 0 ||
-          completedCount === 1 ||
-          completedCount === sortedDates.length
-        ) {
-          onProgress?.({
-            stage: "history",
-            progress: Math.round((completedCount / sortedDates.length) * 100),
-            message: `Loading schedule ${completedCount}/${sortedDates.length}...`,
-          });
+          // Update progress after each request completes
+          if (
+            completedCount % 10 === 0 ||
+            completedCount === 1 ||
+            completedCount === sortedDates.length
+          ) {
+            onProgress?.({
+              stage: "history",
+              progress: Math.round((completedCount / sortedDates.length) * 100),
+              message: `Loading schedule ${completedCount}/${sortedDates.length}...`,
+            });
+          }
+
+          return { date, schedules };
+        } catch (error) {
+          completedCount++;
+          console.error(`Error fetching schedule for ${date}:`, error.message);
+          return { date, schedules: [], error: error.message };
         }
+      });
 
-        return { date, schedules };
-      } catch (error) {
-        completedCount++;
-        console.error(`Error fetching schedule for ${date}:`, error.message);
-        return { date, schedules: [], error: error.message };
-      }
-    });
-
-    historyResults.push(...(await Promise.all(schedulePromises)));
+      const batchResults = await Promise.all(batchPromises);
+      historyResults.push(...batchResults);
+    }
     const historyData = {
       history: historyResults,
     };
@@ -590,44 +595,50 @@ export async function fetchCompiledReportStream(clientId, onProgress, signal) {
       message: `Fetching schedule details for ${sortedDates.length} dates...`,
     });
 
-    // Fetch schedule details for each date
+    // Fetch schedule details for each date (batched)
     let detailsCompletedCount = 0;
-    const scheduleDetailsPromises = sortedDates.map(async (date) => {
-      try {
-        const details = await fetchScheduleDetailsForDate(
-          clientId,
-          date,
-          signal
-        );
-        detailsCompletedCount++;
+    const scheduleDetailsByDate = [];
 
-        // Update progress after each request completes
-        if (
-          detailsCompletedCount % 10 === 0 ||
-          detailsCompletedCount === 1 ||
-          detailsCompletedCount === sortedDates.length
-        ) {
-          onProgress?.({
-            stage: "energy",
-            progress:
-              50 +
-              Math.round((detailsCompletedCount / sortedDates.length) * 33),
-            message: `Fetching schedule details ${detailsCompletedCount}/${sortedDates.length}...`,
-          });
+    for (let i = 0; i < sortedDates.length; i += BATCH_SIZE) {
+      const batch = sortedDates.slice(i, i + BATCH_SIZE);
+      const batchPromises = batch.map(async (date) => {
+        try {
+          const details = await fetchScheduleDetailsForDate(
+            clientId,
+            date,
+            signal
+          );
+          detailsCompletedCount++;
+
+          // Update progress after each request completes
+          if (
+            detailsCompletedCount % 10 === 0 ||
+            detailsCompletedCount === 1 ||
+            detailsCompletedCount === sortedDates.length
+          ) {
+            onProgress?.({
+              stage: "energy",
+              progress:
+                50 +
+                Math.round((detailsCompletedCount / sortedDates.length) * 33),
+              message: `Fetching schedule details ${detailsCompletedCount}/${sortedDates.length}...`,
+            });
+          }
+
+          return { date, details };
+        } catch (error) {
+          detailsCompletedCount++;
+          console.error(
+            `Error fetching schedule details for ${date}:`,
+            error.message
+          );
+          return { date, details: [], error: error.message };
         }
+      });
 
-        return { date, details };
-      } catch (error) {
-        detailsCompletedCount++;
-        console.error(
-          `Error fetching schedule details for ${date}:`,
-          error.message
-        );
-        return { date, details: [], error: error.message };
-      }
-    });
-
-    const scheduleDetailsByDate = await Promise.all(scheduleDetailsPromises);
+      const batchResults = await Promise.all(batchPromises);
+      scheduleDetailsByDate.push(...batchResults);
+    }
 
     // Debug logging for schedule details
     console.log(
