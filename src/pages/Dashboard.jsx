@@ -11,17 +11,50 @@ import MeterSnapshotTable from "../components/MeterSnapshotTable";
 import PeakDemandChart from "../components/PeakDemandChart";
 import TopRuntimeChart from "../components/TopRuntimeChart";
 import WeeklyRuntimeChart from "../components/WeeklyRuntimeChart";
+import { usePelicanData } from "../hooks/usePelicanData";
 import { useReportData } from "../hooks/useReportData";
 
 export default function Dashboard() {
   const { clientId: urlClientId } = useParams();
   const [clientId, setClientId] = useState(urlClientId || "");
-  const { data, loading, error, progress } = useReportData(clientId);
+  const [clientIdInput, setClientIdInput] = useState(urlClientId || "");
+  const [shouldLoadReport, setShouldLoadReport] = useState(false);
+  const [shouldLoadPelican, setShouldLoadPelican] = useState(false);
+  const [pelicanDays, setPelicanDays] = useState(14); // Default 2 weeks
+  const [pelicanClientId, setPelicanClientId] = useState("");
 
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    const formData = new FormData(e.target);
-    setClientId(formData.get("clientId"));
+  const { data, loading, error, progress } = useReportData(
+    shouldLoadReport ? clientId : ""
+  );
+
+  const {
+    loading: pelicanLoading,
+    error: pelicanError,
+    progress: pelicanProgress,
+  } = usePelicanData(pelicanClientId, pelicanDays);
+
+  const handleSetClientId = () => {
+    if (clientIdInput.trim()) {
+      setClientId(clientIdInput.trim());
+      setShouldLoadReport(false);
+      setShouldLoadPelican(false);
+      setPelicanClientId("");
+    }
+  };
+
+  const handleLoadCampusOptimiser = () => {
+    if (clientId) {
+      setShouldLoadReport(true);
+      setShouldLoadPelican(false);
+    }
+  };
+
+  const handleLoadPelican = () => {
+    if (clientId) {
+      setPelicanClientId(clientId);
+      setShouldLoadPelican(true);
+      setShouldLoadReport(false);
+    }
   };
 
   return (
@@ -39,8 +72,8 @@ export default function Dashboard() {
       <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
         {/* Client ID Form */}
         <div className="px-4 py-6 sm:px-0">
-          <form onSubmit={handleSubmit} className="mb-8">
-            <div className="flex gap-4 items-end">
+          <div className="mb-8">
+            <div className="flex gap-4 items-end flex-wrap">
               <div className="flex-1 max-w-md">
                 <label
                   htmlFor="clientId"
@@ -50,25 +83,74 @@ export default function Dashboard() {
                 </label>
                 <input
                   type="text"
-                  name="clientId"
                   id="clientId"
-                  defaultValue={clientId}
+                  value={clientIdInput}
+                  onChange={(e) => setClientIdInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      handleSetClientId();
+                    }
+                  }}
                   className="shadow-sm focus:ring-blue-500 focus:border-blue-500 block w-full sm:text-sm border-gray-300 rounded-md px-4 py-2 border"
                   placeholder="Enter client ID (e.g., 1420)"
-                  required
                 />
               </div>
               <button
-                type="submit"
-                className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                type="button"
+                onClick={handleSetClientId}
+                className="inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md shadow-sm text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
               >
-                Load Report
+                Set Client ID
               </button>
             </div>
-          </form>
+            {clientId && (
+              <div className="mt-4 flex gap-4 items-end flex-wrap">
+                <button
+                  type="button"
+                  onClick={handleLoadCampusOptimiser}
+                  disabled={loading}
+                  className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Load Campus Optimiser Data
+                </button>
+                <div className="flex gap-4 items-end">
+                  <div>
+                    <label
+                      htmlFor="pelicanDays"
+                      className="block text-sm font-medium text-gray-700 mb-2"
+                    >
+                      Days to Load
+                    </label>
+                    <input
+                      type="number"
+                      id="pelicanDays"
+                      min="1"
+                      max="90"
+                      value={pelicanDays}
+                      onChange={(e) => setPelicanDays(Number(e.target.value))}
+                      className="shadow-sm focus:ring-blue-500 focus:border-blue-500 block w-24 sm:text-sm border-gray-300 rounded-md px-4 py-2 border"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleLoadPelican}
+                    disabled={pelicanLoading}
+                    className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Load Pelican Data
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
 
           {/* Loading Progress Modal */}
           <LoadingProgress progress={progress} isVisible={loading} />
+          <LoadingProgress
+            progress={pelicanProgress}
+            isVisible={pelicanLoading}
+          />
 
           {/* Error State */}
           {error && (
@@ -76,9 +158,21 @@ export default function Dashboard() {
               <div className="flex">
                 <div className="ml-3">
                   <h3 className="text-sm font-medium text-red-800">
-                    Error loading data
+                    Error loading Campus Optimiser data
                   </h3>
                   <p className="mt-2 text-sm text-red-700">{error}</p>
+                </div>
+              </div>
+            </div>
+          )}
+          {pelicanError && (
+            <div className="rounded-md bg-red-50 p-4 mb-6">
+              <div className="flex">
+                <div className="ml-3">
+                  <h3 className="text-sm font-medium text-red-800">
+                    Error loading Pelican data
+                  </h3>
+                  <p className="mt-2 text-sm text-red-700">{pelicanError}</p>
                 </div>
               </div>
             </div>
