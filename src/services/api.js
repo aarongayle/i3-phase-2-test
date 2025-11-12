@@ -723,28 +723,6 @@ export async function fetchCompiledReport(clientId) {
 }
 
 /**
- * Fetch top runtime devices
- * @param {string|number} clientId - The client ID
- * @param {number} limit - Number of top devices to fetch
- * @returns {Promise<Object>} The top runtime data
- */
-export async function fetchTopRuntime(clientId, limit = 10) {
-  const url = `${API_BASE_URL}/analytics/runtime-top/${clientId}?limit=${limit}`;
-  console.log(`[API] Fetching top runtime from:`, url);
-
-  const response = await fetch(url);
-
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
-    throw new Error(
-      error.error || `HTTP ${response.status}: ${response.statusText}`
-    );
-  }
-
-  return response.json();
-}
-
-/**
  * Fetch buildings to get Pelican sites
  * @param {string|number} clientId - The client ID
  * @param {AbortSignal} signal - Optional abort signal

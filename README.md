@@ -83,18 +83,16 @@ Vercel KV (Global Redis)
 ### API Endpoints
 
 ```
-GET /api/health
-GET /api/reports/compiled/[clientId]
-GET /api/reports/devices/[clientId]
-GET /api/reports/energy/[clientId]
-GET /api/analytics/runtime-weekly/[clientId]
-GET /api/analytics/runtime-top/[clientId]
-GET /api/analytics/energy-daily/[clientId]
-GET /api/analytics/energy-intervals/[clientId]
-GET /api/pelican/sites
-GET /api/pelican/history/[siteSlug]
-GET /api/co/devices/[clientId]
-GET /api/co/buildings/[clientId]
+GET /api/devices/[clientId]
+GET /api/dates/[clientId]
+GET /api/units
+GET /api/meters/[clientId]
+GET /api/intervals/[clientId]
+GET /api/schedules/[clientId]/[date]
+GET /api/schedule-details/[clientId]/[date]
+GET /api/buildings/[clientId]
+GET /api/pelican/thermostats/[clientId]
+GET /api/pelican/history/[clientId]
 ```
 
 ## 📁 Project Structure
@@ -102,12 +100,16 @@ GET /api/co/buildings/[clientId]
 ```
 phase-2/
 ├── api/                          # Vercel serverless functions
-│   ├── health.js
-│   ├── reports/
-│   │   └── compiled/
-│   │       └── [clientId].js
-│   ├── analytics/
-│   └── ...
+│   ├── devices/
+│   ├── dates/
+│   ├── units/
+│   ├── meters/
+│   ├── intervals/
+│   ├── schedules/
+│   ├── schedule-details/
+│   ├── buildings/
+│   ├── pelican/
+│   └── analytics/
 ├── lib/                          # Shared libraries
 │   ├── co-client.js
 │   └── services/
@@ -149,11 +151,11 @@ The `.env.local` file (already in `.gitignore`) allows you to point your local f
 ### Testing
 
 ```bash
-# Test health endpoint
-curl http://localhost:3000/api/health
+# Test devices endpoint
+curl http://localhost:3000/api/devices/1420
 
-# Test report endpoint
-curl http://localhost:3000/api/reports/compiled/1420
+# Test dates endpoint
+curl http://localhost:3000/api/dates/1420
 ```
 
 ### Deployment

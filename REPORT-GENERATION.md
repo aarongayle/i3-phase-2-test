@@ -80,13 +80,17 @@ For production, you can:
 
 ## For Development
 
-If your dataset is small (< 5 minutes to process), the API will work fine as-is. Just hit:
+The frontend uses individual API endpoints to fetch data incrementally with progress tracking. The main entry point is through the `fetchCompiledReportStream` function which calls:
 
-```
-GET /api/reports/compiled/[clientId]
-```
+- `/api/devices/[clientId]`
+- `/api/dates/[clientId]`
+- `/api/units`
+- `/api/schedules/[clientId]/[date]`
+- `/api/schedule-details/[clientId]/[date]`
+- `/api/meters/[clientId]`
+- `/api/intervals/[clientId]`
 
-The client will show a loading spinner and wait for the data.
+The client will show a loading spinner with progress updates as data is fetched.
 
 ## Optimization Tips
 
