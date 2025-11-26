@@ -9,6 +9,8 @@ import {
 import LoadingProgress from "../components/LoadingProgress";
 import MeterSnapshotTable from "../components/MeterSnapshotTable";
 import PeakDemandChart from "../components/PeakDemandChart";
+import RuntimeByOccupancyCard from "../components/RuntimeByOccupancyCard";
+import ScheduledVsOccupancyChart from "../components/ScheduledVsOccupancyChart";
 import TopRuntimeChart from "../components/TopRuntimeChart";
 import WeeklyRuntimeChart from "../components/WeeklyRuntimeChart";
 import { usePelicanData } from "../hooks/usePelicanData";
@@ -28,6 +30,7 @@ export default function Dashboard() {
   );
 
   const {
+    data: pelicanData,
     loading: pelicanLoading,
     error: pelicanError,
     progress: pelicanProgress,
@@ -56,6 +59,9 @@ export default function Dashboard() {
       setShouldLoadReport(false);
     }
   };
+
+  // Get analytics from Pelican data (calculated client-side)
+  const pelicanAnalytics = pelicanData?.analytics;
 
   return (
     <div className="min-h-screen bg-gray-100">
@@ -332,7 +338,59 @@ export default function Dashboard() {
 
               {/* Device Metrics Table */}
               <DeviceMetricsTable devices={data.devices} />
+            </div>
+          )}
 
+          {/* Pelican Analytics Display */}
+          {pelicanAnalytics && !pelicanLoading && (
+            <div className="space-y-6 mt-6">
+              {/* Pelican Analytics Header */}
+              <div className="bg-green-50 border border-green-200 rounded-lg px-4 py-3">
+                <h2 className="text-lg font-semibold text-green-900">
+                  🌡️ Pelican Thermostat Analytics
+                </h2>
+                <p className="text-sm text-green-700 mt-1">
+                  Occupancy and runtime analysis from{" "}
+                  {pelicanAnalytics.dateRange?.start} to{" "}
+                  {pelicanAnalytics.dateRange?.end}
+                </p>
+              </div>
+
+              {/* Runtime by Occupancy Card */}
+              <RuntimeByOccupancyCard data={pelicanAnalytics} />
+
+              {/* Scheduled vs Occupancy Chart - shows both CO and Pelican data */}
+              <ScheduledVsOccupancyChart
+                pelicanData={pelicanAnalytics}
+                coDevices={data?.devices}
+              />
+            </div>
+          )}
+
+          {/* Combined Data Analysis - when both CO and Pelican data are loaded */}
+          {data && pelicanAnalytics && !loading && !pelicanLoading && (
+            <div className="space-y-6 mt-6">
+              <div className="bg-gradient-to-r from-blue-50 to-green-50 border border-blue-200 rounded-lg px-4 py-3">
+                <h2 className="text-lg font-semibold text-gray-900">
+                  📊 Combined Analysis
+                </h2>
+                <p className="text-sm text-gray-600 mt-1">
+                  Comparing Campus Optimizer schedules with Pelican thermostat
+                  data
+                </p>
+              </div>
+
+              {/* Show comparison chart with both datasets */}
+              <ScheduledVsOccupancyChart
+                pelicanData={pelicanAnalytics}
+                coDevices={data.devices}
+                showRuntime={true}
+              />
+            </div>
+          )}
+
+          {data && !loading && (
+            <div className="space-y-6 mt-6">
               {/* Raw JSON (for debugging) */}
               <details className="bg-white shadow overflow-hidden sm:rounded-lg">
                 <summary className="px-4 py-5 sm:px-6 cursor-pointer text-sm font-medium text-gray-700 hover:text-gray-900">
@@ -348,7 +406,7 @@ export default function Dashboard() {
           )}
 
           {/* No Data State */}
-          {!data && !loading && !error && (
+          {!data && !pelicanData && !loading && !pelicanLoading && !error && (
             <div className="text-center py-12">
               <p className="text-gray-500">
                 Enter a client ID to load report data

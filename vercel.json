@@ -2,5 +2,7 @@
   "buildCommand": "pnpm build",
   "devCommand": null,
   "installCommand": "pnpm install",
-  "outputDirectory": "dist"
+  "outputDirectory": "dist",
+  "functions": {},
+  "rewrites": []
 }

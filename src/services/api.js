@@ -746,42 +746,18 @@ async function fetchBuildings(clientId, signal) {
 }
 
 /**
- * Discover thermostats for a Pelican site
+ * Fetch Pelican history for ALL thermostats at a site for a specific date
  * @param {string|number} clientId - The client ID
  * @param {string} siteSlug - The Pelican site slug
- * @param {string} date - Date to use for discovery (YYYY-MM-DD)
- * @param {AbortSignal} signal - Optional abort signal
- * @returns {Promise<Array<string>>} Array of serial numbers
- */
-async function discoverThermostats(clientId, siteSlug, date, signal) {
-  const url = `${API_BASE_URL}/pelican/thermostats/${clientId}?siteSlug=${encodeURIComponent(siteSlug)}&date=${date}`;
-  console.log(`[API] Discovering thermostats from:`, url);
-
-  const response = await fetch(url, { signal });
-
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
-    throw new Error(
-      error.error || `HTTP ${response.status}: ${response.statusText}`
-    );
-  }
-
-  const data = await response.json();
-  return data.serialNos || [];
-}
-
-/**
- * Fetch Pelican history for a specific thermostat
- * @param {string|number} clientId - The client ID
- * @param {string} siteSlug - The Pelican site slug
- * @param {string} serialNo - The thermostat serial number
  * @param {string} date - Date to fetch (YYYY-MM-DD)
  * @param {AbortSignal} signal - Optional abort signal
- * @returns {Promise<Object>} The history data
+ * @returns {Promise<Object>} The history data with all thermostats
  */
-async function fetchPelicanHistory(clientId, siteSlug, serialNo, date, signal) {
-  const url = `${API_BASE_URL}/pelican/history/${clientId}?siteSlug=${encodeURIComponent(siteSlug)}&serialNo=${encodeURIComponent(serialNo)}&date=${date}`;
-  
+async function fetchPelicanHistoryForSite(clientId, siteSlug, date, signal) {
+  const url = `${API_BASE_URL}/pelican/history/${clientId}?siteSlug=${encodeURIComponent(
+    siteSlug
+  )}&date=${date}`;
+
   const response = await fetch(url, { signal });
 
   if (!response.ok) {
@@ -802,8 +778,15 @@ async function fetchPelicanHistory(clientId, siteSlug, serialNo, date, signal) {
  * @param {AbortSignal} signal - Optional abort signal
  * @returns {Promise<Object>} The bulk load result
  */
-export async function fetchPelicanBulkLoad(clientId, days = 14, onProgress, signal) {
-  console.log(`[API] Starting Pelican bulk load for clientId: ${clientId}, days: ${days}`);
+export async function fetchPelicanBulkLoad(
+  clientId,
+  days = 14,
+  onProgress,
+  signal
+) {
+  console.log(
+    `[API] Starting Pelican bulk load for clientId: ${clientId}, days: ${days}`
+  );
 
   // Calculate date range
   const endDate = new Date();
@@ -840,85 +823,86 @@ export async function fetchPelicanBulkLoad(clientId, days = 14, onProgress, sign
   onProgress?.({
     stage: "pelican",
     progress: 5,
-    message: `Found ${sites.length} Pelican sites. Discovering thermostats...`,
+    message: `Found ${sites.length} Pelican sites. Loading history...`,
   });
 
-  // Discover thermostats for each site
-  const siteThermostats = new Map(); // siteSlug -> serialNos[]
-  let siteIndex = 0;
-  for (const siteSlug of sites) {
-    try {
-      // Use the first date for discovery
-      const serialNos = await discoverThermostats(
-        clientId,
-        siteSlug,
-        dates[0],
-        signal
-      );
-      siteThermostats.set(siteSlug, serialNos);
-      
-      onProgress?.({
-        stage: "pelican",
-        progress: 5 + Math.floor((++siteIndex / sites.length) * 10),
-        message: `Discovered ${serialNos.length} thermostats for ${siteSlug}...`,
-      });
-    } catch (error) {
-      console.warn(`[API] Failed to discover thermostats for ${siteSlug}:`, error);
-      siteThermostats.set(siteSlug, []);
-    }
-  }
-
-  // Calculate total requests
-  let totalRequests = 0;
-  for (const [siteSlug, serialNos] of siteThermostats) {
-    totalRequests += serialNos.length * dates.length;
-  }
+  // Total requests = sites × days (one request per site/date gets ALL thermostats)
+  const totalRequests = sites.length * dates.length;
 
   onProgress?.({
     stage: "pelican",
-    progress: 15,
-    message: `Loading history for ${totalRequests} thermostat/day combinations...`,
+    progress: 10,
+    message: `Loading ${totalRequests} site/date combinations...`,
   });
 
-  // Fetch history for each site/thermostat/date combination
+  // Fetch history for each site - all dates in parallel per site
   let completedRequests = 0;
   let totalEntries = 0;
-  const results = [];
+  const allThermostats = []; // Collect all thermostat data
 
-  for (const [siteSlug, serialNos] of siteThermostats) {
-    for (const serialNo of serialNos) {
-      for (const date of dates) {
-        if (signal?.aborted) {
-          throw new DOMException("Request aborted", "AbortError");
-        }
+  for (const siteSlug of sites) {
+    if (signal?.aborted) {
+      throw new DOMException("Request aborted", "AbortError");
+    }
 
-        try {
-          const historyData = await fetchPelicanHistory(
-            clientId,
-            siteSlug,
-            serialNo,
-            date,
-            signal
-          );
-          
-          totalEntries += historyData.count || 0;
-          completedRequests++;
+    // Send all date requests for this site in parallel
+    const datePromises = dates.map(async (date) => {
+      try {
+        const result = await fetchPelicanHistoryForSite(
+          clientId,
+          siteSlug,
+          date,
+          signal
+        );
+        return {
+          success: true,
+          siteSlug,
+          date,
+          thermostats: result.thermostats || [],
+          thermostatCount: result.thermostatCount || 0,
+          totalEntries: result.totalEntries || 0,
+        };
+      } catch (error) {
+        console.warn(
+          `[API] Failed to load history for ${siteSlug}/${date}:`,
+          error
+        );
+        return {
+          success: false,
+          siteSlug,
+          date,
+          thermostats: [],
+          thermostatCount: 0,
+          totalEntries: 0,
+        };
+      }
+    });
 
-          const progressPercent = 15 + Math.floor((completedRequests / totalRequests) * 85);
-          onProgress?.({
-            stage: "pelican",
-            progress: progressPercent,
-            message: `Loaded ${completedRequests}/${totalRequests} (${totalEntries} entries)...`,
-          });
-        } catch (error) {
-          console.warn(
-            `[API] Failed to load history for ${siteSlug}/${serialNo}/${date}:`,
-            error
-          );
-          completedRequests++;
-        }
+    // Wait for all date requests for this site to complete
+    const dateResults = await Promise.all(datePromises);
+
+    // Update totals and collect thermostat data
+    for (const result of dateResults) {
+      totalEntries += result.totalEntries;
+      completedRequests++;
+
+      // Collect thermostat data with site/date context
+      for (const thermostat of result.thermostats) {
+        allThermostats.push({
+          ...thermostat,
+          siteSlug: result.siteSlug,
+          date: result.date,
+        });
       }
     }
+
+    const progressPercent =
+      10 + Math.floor((completedRequests / totalRequests) * 90);
+    onProgress?.({
+      stage: "pelican",
+      progress: progressPercent,
+      message: `Loaded ${completedRequests}/${totalRequests} requests (${totalEntries} entries)...`,
+    });
   }
 
   onProgress?.({
@@ -936,5 +920,7 @@ export async function fetchPelicanBulkLoad(clientId, days = 14, onProgress, sign
       start: dates[0],
       end: dates[dates.length - 1],
     },
+    thermostats: allThermostats,
+    buildings,
   };
 }

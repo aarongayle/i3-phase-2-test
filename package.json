@@ -1,12 +1,15 @@
 {
   "name": "campus-optimizer-reports",
   "version": "2.0.0",
-  "description": "CampusOptimizer Reporting System with Vercel Serverless Functions",
+  "description": "CampusOptimizer Reporting System with Express.js API Server",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
+    "server": "node server/index.js",
+    "server:dev": "node --watch server/index.js",
+    "start": "node server/index.js",
     "deploy": "vercel",
     "deploy:prod": "vercel --prod",
     "co:compile": "node campus-optimizer/compile-data.js",
