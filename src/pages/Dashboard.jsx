@@ -11,6 +11,7 @@ import MeterSnapshotTable from "../components/MeterSnapshotTable";
 import PeakDemandChart from "../components/PeakDemandChart";
 import RuntimeByOccupancyCard from "../components/RuntimeByOccupancyCard";
 import ScheduledVsOccupancyChart from "../components/ScheduledVsOccupancyChart";
+import SetpointTrendsChart from "../components/SetpointTrendsChart";
 import TopRuntimeChart from "../components/TopRuntimeChart";
 import WeeklyRuntimeChart from "../components/WeeklyRuntimeChart";
 import { usePelicanData } from "../hooks/usePelicanData";
@@ -364,6 +365,9 @@ export default function Dashboard() {
                 pelicanData={pelicanAnalytics}
                 coDevices={data?.devices}
               />
+
+              {/* Daily Heat/Cool Setpoints */}
+              <SetpointTrendsChart thermostats={pelicanData?.thermostats} />
             </div>
           )}
 

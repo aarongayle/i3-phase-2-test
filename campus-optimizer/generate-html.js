@@ -1,11 +1,41 @@
+  function topBuildings(buildings) {
+    return buildings
+      .slice()
+      .sort((a, b) => (b.runtimeByOccupancy || 0) - (a.runtimeByOccupancy || 0))
+      .slice(0, 5)
+      .map(
+        (b) => `<tr class="border-b">
+        <td class="px-3 py-2">${escapeHtml(b.groupName || "")}</td>
+        <td class="px-3 py-2 text-right">${fmt(b.runtimeByOccupancy)}%</td>
+        <td class="px-3 py-2 text-right">${fmt(b.runtimeMinutes)}</td>
+        <td class="px-3 py-2 text-right">${fmt(b.occupancyMinutes)}</td>
+      </tr>`
+      );
+  }
+
+  function topThermostats(list) {
+    return list
+      .slice()
+      .sort((a, b) => (b.runtimeByOccupancy || 0) - (a.runtimeByOccupancy || 0))
+      .slice(0, 10)
+      .map(
+        (t) => `<tr class="border-b">
+        <td class="px-3 py-2">${escapeHtml(t.name || t.serialNo || "")}</td>
+        <td class="px-3 py-2 text-right">${fmt(t.runtimeByOccupancy)}%</td>
+        <td class="px-3 py-2 text-right">${fmt(t.runtimeMinutes)}</td>
+        <td class="px-3 py-2 text-right">${fmt(t.occupancyMinutes)}</td>
+      </tr>`
+      );
+  }
 import fs from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
-function ensureDir(dirPath) {
+export function ensureDir(dirPath) {
   fs.mkdirSync(dirPath, { recursive: true });
 }
 
-function loadCompiled() {
+export function loadCompiled() {
   const inputPath = path.resolve("./campus-optimizer/data/compiled.json");
   if (!fs.existsSync(inputPath)) {
     throw new Error(
@@ -69,10 +99,11 @@ function buildSparklineSvg(values, width = 120, height = 28) {
   </svg>`;
 }
 
-function buildHtml(data) {
+export function buildHtml(data) {
   const meta = data.report?.meta || {};
   const devices = data.report?.devices || [];
   const energy = data.report?.energy || {};
+  const pelicanAnalytics = data.pelican?.analytics || null;
   const energyExpected = Array.isArray(energy.expected) ? energy.expected : [];
   const energyActual = Array.isArray(energy.actual) ? energy.actual : [];
 
@@ -81,6 +112,28 @@ function buildHtml(data) {
     .slice(0, 10);
 
   const { labels, totalRuntime } = aggregateWeekly(devices);
+
+  // Pelican vs CO comparison (if present)
+  const pelicanDaily = Array.isArray(pelicanAnalytics?.daily)
+    ? pelicanAnalytics.daily
+    : [];
+  const pelicanDateSet = new Set(pelicanDaily.map((d) => d.date));
+  const coDateSet = new Set();
+  const coDailyMap = new Map();
+  devices.forEach((d) =>
+    (d.runtimeWeekly || []).forEach((p) => {
+      coDateSet.add(p.date);
+      coDailyMap.set(p.date, (coDailyMap.get(p.date) || 0) + (p.minutes || 0));
+    })
+  );
+  const combinedDates = Array.from(new Set([...pelicanDateSet, ...coDateSet])).sort(
+    (a, b) => new Date(a) - new Date(b)
+  );
+  const pelicanDailyMap = new Map(pelicanDaily.map((d) => [d.date, d]));
+  const pelicanDailySetpoints = Array.isArray(pelicanAnalytics?.dailySetpoints)
+    ? pelicanAnalytics.dailySetpoints
+    : [];
+  const pelicanSetpointLabels = pelicanDailySetpoints.map((d) => d.date);
 
   // Aggregate meter-level energy by calendar day
   function dailyAggregates(list) {
@@ -320,10 +373,11 @@ function buildHtml(data) {
   <script src=\"https://cdn.jsdelivr.net/npm/chart.js\"></script>
   <style>
     .card { @apply bg-white shadow rounded p-4; }
+    canvas { min-height: 260px; }
   </style>
 </head>
 <body class=\"bg-gray-50 text-gray-900\">
-  <div class=\"max-w-7xl mx-auto p-6 space-y-6\">
+  <div id=\"report-root\" class=\"max-w-7xl mx-auto p-6 space-y-6\">
     <header class=\"flex items-end justify-between\">
       <div>
         <h1 class=\"text-2xl font-semibold\">CampusOptimizer Report</h1>
@@ -345,13 +399,17 @@ function buildHtml(data) {
     </header>
 
     <section class="grid grid-cols-1 md:grid-cols-2 gap-6">
-      <div class="card">
+      <div class="card min-h-[360px]">
         <h2 class="text-lg font-semibold mb-2">Top 10 Devices by Avg Runtime (min)</h2>
-        <canvas id="barTopRuntime" height="120"></canvas>
+        <div class="h-72">
+          <canvas id="barTopRuntime" style="min-height:260px;"></canvas>
+        </div>
       </div>
-      <div class="card">
+      <div class="card min-h-[360px]">
         <h2 class="text-lg font-semibold mb-2">Total Runtime per Week (min)</h2>
-        <canvas id="lineWeekly" height="120"></canvas>
+        <div class="h-72">
+          <canvas id="lineWeekly" style="min-height:260px;"></canvas>
+        </div>
       </div>
     </section>
 
@@ -359,29 +417,111 @@ function buildHtml(data) {
       energyLabels.length
         ? `
     <section class="grid grid-cols-1 md:grid-cols-2 gap-6">
-      <div class="card">
+      <div class="card min-h-[360px]">
         <h2 class="text-lg font-semibold mb-2">Daily Energy Use (All Meters)</h2>
         <p class="text-xs text-gray-500 mb-2">Expected vs Actual (sum of interval values per day)</p>
-        <canvas id="lineEnergy" height="120"></canvas>
+        <div class="h-72">
+          <canvas id="lineEnergy" style="min-height:260px;"></canvas>
+        </div>
       </div>
-      <div class="card">
+      <div class="card min-h-[360px]">
         <h2 class="text-lg font-semibold mb-2">Daily Peak Demand (All Meters)</h2>
         <p class="text-xs text-gray-500 mb-2">Expected vs Actual (max interval kW per day)</p>
-        <canvas id="linePeakDemand" height="120"></canvas>
+        <div class="h-72">
+          <canvas id="linePeakDemand" style="min-height:260px;"></canvas>
+        </div>
       </div>
     </section>
+    ${
+      pelicanAnalytics
+        ? `
+    <section class="card min-h-[380px]">
+      <h2 class="text-lg font-semibold mb-2">Schedule vs Occupancy (CO vs Pelican)</h2>
+      <p class="text-xs text-gray-500 mb-3">Daily comparison of Pelican occupancy/runtime vs CO scheduled minutes</p>
+      <div class="h-80">
+        <canvas id="pelicanComparison" style="min-height:280px;"></canvas>
+      </div>
+    </section>
+    <section class="card min-h-[380px]">
+      <h2 class="text-lg font-semibold mb-2">Runtime vs Occupancy (Pelican)</h2>
+      <p class="text-xs text-gray-500 mb-3">Campus and top sites by runtime/occupancy ratio</p>
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+        <div class="bg-emerald-50 rounded-lg p-4">
+          <p class="text-xs text-emerald-700 font-semibold mb-1">Campus Runtime/OCC</p>
+          <p class="text-3xl font-bold text-emerald-800">${round2(pelicanAnalytics.campus?.runtimeByOccupancy || 0)}%</p>
+          <p class="text-xs text-emerald-700 mt-1">Runtime: ${fmt(pelicanAnalytics.campus?.runtimeMinutes || 0)} min</p>
+          <p class="text-xs text-emerald-700">Occupancy: ${fmt(pelicanAnalytics.campus?.occupancyMinutes || 0)} min</p>
+        </div>
+        <div class="bg-blue-50 rounded-lg p-4">
+          <p class="text-xs text-blue-700 font-semibold mb-1">Thermostats</p>
+          <p class="text-3xl font-bold text-blue-800">${pelicanAnalytics.campus?.thermostatCount || 0}</p>
+          <p class="text-xs text-blue-700 mt-1">Buildings: ${pelicanAnalytics.campus?.buildingCount || 0}</p>
+        </div>
+        <div class="bg-amber-50 rounded-lg p-4">
+          <p class="text-xs text-amber-700 font-semibold mb-1">Temps (avg)</p>
+          <p class="text-sm text-amber-800">Occ Heat: ${fmt1(pelicanAnalytics.campus?.temps?.occupiedHeat)}</p>
+          <p class="text-sm text-amber-800">Unocc Heat: ${fmt1(pelicanAnalytics.campus?.temps?.unoccupiedHeat)}</p>
+          <p class="text-sm text-blue-800">Occ Cool: ${fmt1(pelicanAnalytics.campus?.temps?.occupiedCool)}</p>
+          <p class="text-sm text-blue-800">Unocc Cool: ${fmt1(pelicanAnalytics.campus?.temps?.unoccupiedCool)}</p>
+        </div>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="min-w-full text-sm">
+          <thead class="bg-gray-100 text-gray-700">
+            <tr>
+              <th class="px-3 py-2 text-left">Top Buildings (ratio)</th>
+              <th class="px-3 py-2 text-right">Runtime %Occ</th>
+              <th class="px-3 py-2 text-right">Runtime (min)</th>
+              <th class="px-3 py-2 text-right">Occupancy (min)</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${topBuildings(pelicanAnalytics.buildings || []).join("")}
+          </tbody>
+        </table>
+      </div>
+      <div class="overflow-x-auto mt-4">
+        <table class="min-w-full text-sm">
+          <thead class="bg-gray-100 text-gray-700">
+            <tr>
+              <th class="px-3 py-2 text-left">Top Thermostats (ratio)</th>
+              <th class="px-3 py-2 text-right">Runtime %Occ</th>
+              <th class="px-3 py-2 text-right">Runtime (min)</th>
+              <th class="px-3 py-2 text-right">Occupancy (min)</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${topThermostats(pelicanAnalytics.thermostats || []).join("")}
+          </tbody>
+        </table>
+      </div>
+    </section>
+    <section class="card min-h-[380px]">
+      <h2 class="text-lg font-semibold mb-2">Setpoint Trends (Pelican)</h2>
+      <p class="text-xs text-gray-500 mb-3">Daily average setpoints across all thermostats</p>
+      <div class="h-80">
+        <canvas id="pelicanSetpoints" style="min-height:280px;"></canvas>
+      </div>
+    </section>
+    `
+        : ""
+    }
     <section class="grid grid-cols-1 md:grid-cols-2 gap-6">
-      <div class="card">
+      <div class="card min-h-[360px]">
         <h2 class="text-lg font-semibold mb-2">Interval Comparison — Latest Day</h2>
         <p class="text-xs text-gray-500 mb-2">Expected vs Actual demand per 15-min interval for ${
           latestEnergyDate ? escapeHtml(latestEnergyDate) : "latest day"
         }</p>
-        <canvas id="lineIntervalLatest" height="120"></canvas>
+        <div class="h-72">
+          <canvas id="lineIntervalLatest" style="min-height:260px;"></canvas>
+        </div>
       </div>
-      <div class="card">
+      <div class="card min-h-[360px]">
         <h2 class="text-lg font-semibold mb-2">Interval Comparison — Multi-Day Average</h2>
         <p class="text-xs text-gray-500 mb-2">Average expected vs actual demand across all days (per 15-min interval)</p>
-        <canvas id="lineIntervalAverage" height="120"></canvas>
+        <div class="h-72">
+          <canvas id="lineIntervalAverage" style="min-height:260px;"></canvas>
+        </div>
       </div>
     </section>
     <section class="card">
@@ -464,6 +604,35 @@ function buildHtml(data) {
     )};
     const averageActualInterval = ${JSON.stringify(
       averageActualIntervalSeries.map((n) => round2(n))
+    )};
+
+    const pelicanDates = ${JSON.stringify(combinedDates)};
+    const pelicanCOValues = ${JSON.stringify(
+      combinedDates.map((d) => round2(coDailyMap.get(d) || 0))
+    )};
+    const pelicanOccValues = ${JSON.stringify(
+      combinedDates.map((d) => round2(pelicanDailyMap.get(d)?.occupancyMinutes || 0))
+    )};
+    const pelicanRunValues = ${JSON.stringify(
+      combinedDates.map((d) => round2(pelicanDailyMap.get(d)?.runtimeMinutes || 0))
+    )};
+
+    const setpointLabelsRaw = ${JSON.stringify(pelicanSetpointLabels)};
+    const setpointLabels = setpointLabelsRaw.map((d) => formatLabel(d));
+    const setpointOccHeat = ${JSON.stringify(
+      pelicanDailySetpoints.map((d) => round2(d.occupiedHeat ?? null))
+    )};
+    const setpointUnoccHeat = ${JSON.stringify(
+      pelicanDailySetpoints.map((d) => round2(d.unoccupiedHeat ?? null))
+    )};
+    const setpointOccCool = ${JSON.stringify(
+      pelicanDailySetpoints.map((d) => round2(d.occupiedCool ?? null))
+    )};
+    const setpointUnoccCool = ${JSON.stringify(
+      pelicanDailySetpoints.map((d) => round2(d.unoccupiedCool ?? null))
+    )};
+    const setpointDeadband = ${JSON.stringify(
+      pelicanDailySetpoints.map((d) => round2(d.deadband ?? null))
     )};
 
     const barCtx = document.getElementById('barTopRuntime');
@@ -641,7 +810,129 @@ function buildHtml(data) {
       }
     }
 
+    const pelicanLabels = pelicanDates.map((d) => formatLabel(d));
+
+    if (pelicanLabels.length) {
+      const pelicanCtx = document.getElementById('pelicanComparison');
+      if (pelicanCtx) {
+        new Chart(pelicanCtx, {
+          type: 'line',
+          data: {
+            labels: pelicanLabels,
+            datasets: [
+              {
+                label: 'CO Scheduled (min)',
+                data: pelicanCOValues,
+                borderColor: 'rgba(59, 130, 246, 1)',
+                backgroundColor: 'rgba(59, 130, 246, 0.2)',
+                borderWidth: 2,
+                tension: 0.25,
+                spanGaps: true
+              },
+              {
+                label: 'Pelican Occupancy (min)',
+                data: pelicanOccValues,
+                borderColor: 'rgba(34, 197, 94, 1)',
+                backgroundColor: 'rgba(34, 197, 94, 0.2)',
+                borderWidth: 2,
+                tension: 0.25,
+                spanGaps: true
+              },
+              {
+                label: 'Pelican Runtime (min)',
+                data: pelicanRunValues,
+                borderColor: 'rgba(249, 115, 22, 1)',
+                backgroundColor: 'rgba(249, 115, 22, 0.15)',
+                borderDash: [6, 4],
+                borderWidth: 2,
+                tension: 0.25,
+                spanGaps: true
+              }
+            ]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            scales: {
+              y: { beginAtZero: true, title: { display: true, text: 'Minutes' } }
+            }
+          }
+        });
+      }
+    }
+
+    if (setpointLabels.length) {
+      const spCtx = document.getElementById('pelicanSetpoints');
+      if (spCtx) {
+        new Chart(spCtx, {
+          type: 'line',
+          data: {
+            labels: setpointLabels,
+            datasets: [
+              {
+                label: 'Occupied Heat',
+                data: setpointOccHeat,
+                borderColor: 'rgb(239, 68, 68)',
+                backgroundColor: 'rgba(239, 68, 68, 0.2)',
+                spanGaps: true,
+                tension: 0.25,
+              },
+              {
+                label: 'Unoccupied Heat',
+                data: setpointUnoccHeat,
+                borderColor: 'rgb(248, 113, 113)',
+                backgroundColor: 'rgba(248, 113, 113, 0.15)',
+                borderDash: [6,4],
+                spanGaps: true,
+                tension: 0.25,
+              },
+              {
+                label: 'Occupied Cool',
+                data: setpointOccCool,
+                borderColor: 'rgb(59, 130, 246)',
+                backgroundColor: 'rgba(59, 130, 246, 0.2)',
+                spanGaps: true,
+                tension: 0.25,
+              },
+              {
+                label: 'Unoccupied Cool',
+                data: setpointUnoccCool,
+                borderColor: 'rgb(96, 165, 250)',
+                backgroundColor: 'rgba(96, 165, 250, 0.15)',
+                borderDash: [6,4],
+                spanGaps: true,
+                tension: 0.25,
+              },
+              {
+                label: 'Deadband (Occ Cool - Occ Heat)',
+                data: setpointDeadband,
+                borderColor: 'rgb(168, 85, 247)',
+                backgroundColor: 'rgba(168, 85, 247, 0.15)',
+                borderDash: [4,3],
+                spanGaps: true,
+                tension: 0.25,
+              },
+            ]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+              y: { title: { display: true, text: '°F' } }
+            }
+          }
+        });
+      }
+    }
+
     function round2(n) { return Math.round((n || 0) * 100) / 100; }
+    function formatLabel(dateStr) {
+      if (!dateStr) return '';
+      const d = new Date(dateStr);
+      return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    }
+    window.__reportReady = true;
   </script>
 </body>
 </html>`;
@@ -653,6 +944,10 @@ function round2(n) {
 }
 function fmt(n) {
   return (n ?? 0).toLocaleString(undefined, { maximumFractionDigits: 2 });
+}
+function fmt1(n) {
+  if (n === null || n === undefined || Number.isNaN(Number(n))) return "—";
+  return Number(n).toLocaleString(undefined, { maximumFractionDigits: 1 });
 }
 function escapeHtml(str) {
   return String(str)
@@ -673,7 +968,13 @@ async function main() {
   console.log(`Wrote ${outPath}`);
 }
 
-main().catch((err) => {
-  console.error("generate-html failed:", err);
-  process.exitCode = 1;
-});
+const invokedDirectly =
+  process.argv[1] &&
+  pathToFileURL(process.argv[1]).href === import.meta.url;
+
+if (invokedDirectly) {
+  main().catch((err) => {
+    console.error("generate-html failed:", err);
+    process.exitCode = 1;
+  });
+}

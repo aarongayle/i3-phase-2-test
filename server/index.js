@@ -24,6 +24,7 @@ dotenv.config({ path: join(__dirname, "..", ".env") });
 // Import route handlers
 import * as cache from "./cache.js";
 import buildingsRouter from "./routes/buildings.js";
+import clientsRouter from "./routes/clients.js";
 import datesRouter from "./routes/dates.js";
 import devicesRouter from "./routes/devices.js";
 import intervalsRouter from "./routes/intervals.js";
@@ -32,6 +33,7 @@ import pelicanHistoryRouter from "./routes/pelican-history.js";
 import pelicanThermostatsRouter from "./routes/pelican-thermostats.js";
 import scheduleDetailsRouter from "./routes/schedule-details.js";
 import schedulesRouter from "./routes/schedules.js";
+import reportsHeadlessRouter from "./routes/reports-headless.js";
 import unitsRouter from "./routes/units.js";
 
 const app = express();
@@ -81,6 +83,7 @@ app.get("/api/health", (req, res) => {
 
 // Mount API routes
 app.use("/api/buildings", buildingsRouter);
+app.use("/api/clients", clientsRouter);
 app.use("/api/dates", datesRouter);
 app.use("/api/devices", devicesRouter);
 app.use("/api/intervals", intervalsRouter);
@@ -88,6 +91,7 @@ app.use("/api/meters", metersRouter);
 app.use("/api/schedules", schedulesRouter);
 app.use("/api/schedule-details", scheduleDetailsRouter);
 app.use("/api/units", unitsRouter);
+app.use("/api/reports", reportsHeadlessRouter);
 app.use("/api/pelican/thermostats", pelicanThermostatsRouter);
 app.use("/api/pelican/history", pelicanHistoryRouter);
 
@@ -135,6 +139,7 @@ app.listen(PORT, () => {
 ║   API Endpoints:                                           ║
 ║   - GET /api/health                                        ║
 ║   - GET /api/buildings/:clientId                           ║
+║   - GET /api/clients                                       ║
 ║   - GET /api/dates/:clientId                               ║
 ║   - GET /api/devices/:clientId                             ║
 ║   - GET /api/intervals/:clientId                           ║
