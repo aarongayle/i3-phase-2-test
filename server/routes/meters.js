@@ -27,6 +27,8 @@ router.get("/:clientId", async (req, res) => {
       return res.status(200).json({ meters: cachedData, cached: true });
     }
 
+    console.log(process.env.CO_MASTER_KEY);
+
     // Fetch meters
     const url = `${uri}/project/meters?client=${clientId}`;
     const response = await fetch(url, {
@@ -57,4 +59,3 @@ router.get("/:clientId", async (req, res) => {
 });
 
 export default router;
-
