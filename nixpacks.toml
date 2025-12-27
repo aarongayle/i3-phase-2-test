@@ -24,6 +24,5 @@ cmds = [
 cmd = "pnpm run start"
 
 [variables]
-PUPPETEER_EXECUTABLE_PATH = "/usr/bin/chromium"
 PUPPETEER_CACHE_DIR = "/usr/local/share/puppeteer"
 

@@ -21,6 +21,44 @@ function clampFormat(format) {
   return fmt === "jpeg" ? "jpeg" : fmt === "jpg" ? "jpeg" : "png";
 }
 
+function resolveChromeFromCache(cacheDir) {
+  try {
+    const chromeRoot = path.join(cacheDir, "chrome");
+    const entries = fs.readdirSync(chromeRoot, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const execPath = path.join(
+        chromeRoot,
+        entry.name,
+        "chrome-linux64",
+        "chrome"
+      );
+      if (fs.existsSync(execPath)) {
+        return execPath;
+      }
+    }
+  } catch (_err) {
+    // ignore and fall through to other strategies
+  }
+  return null;
+}
+
+function resolveChromePath() {
+  const cacheDir =
+    process.env.PUPPETEER_CACHE_DIR || "/usr/local/share/puppeteer";
+
+  const candidates = [
+    process.env.PUPPETEER_EXECUTABLE_PATH,
+    resolveChromeFromCache(cacheDir),
+    "/usr/bin/chromium",
+    "/usr/bin/chromium-browser",
+    "/usr/bin/google-chrome",
+    "/usr/bin/google-chrome-stable",
+  ].filter(Boolean);
+
+  return candidates.find((p) => fs.existsSync(p)) || null;
+}
+
 export async function generateHeadlessReportImage({
   clientId,
   outDir = DEFAULT_OUT_DIR,
@@ -71,22 +109,16 @@ export async function generateHeadlessReportImage({
 
   progress("render-start", "Launching headless browser to render report");
   // In containers (Coolify/Docker) we need an explicit binary path plus
-  // no-sandbox flags. Try env first, then common system paths.
-  const candidatePaths = [
-    process.env.PUPPETEER_EXECUTABLE_PATH,
-    "/usr/bin/chromium",
-    "/usr/bin/chromium-browser",
-    "/usr/bin/google-chrome",
-    "/usr/bin/google-chrome-stable",
-  ].filter(Boolean);
-
-  const executablePath = candidatePaths.find((p) => fs.existsSync(p));
+  // no-sandbox flags. Resolve Puppeteer cache first, then system paths.
+  const executablePath = resolveChromePath();
 
   const launchOptions = {
     headless: "new",
     args: ["--no-sandbox", "--disable-setuid-sandbox"],
-    executablePath,
   };
+  if (executablePath) {
+    launchOptions.executablePath = executablePath;
+  }
 
   const browser = await puppeteer.launch(launchOptions);
   try {
