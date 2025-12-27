@@ -14,7 +14,11 @@ aptPkgs = [
 cmds = ["pnpm install --frozen-lockfile"]
 
 [phases.build]
-cmds = ["pnpm run build"]
+cmds = [
+  # Fetch a known-good Chromium for Puppeteer to use
+  "pnpm exec puppeteer browsers install chrome --path /usr/local/share/puppeteer",
+  "pnpm run build"
+]
 
 [start]
 cmd = "pnpm run start"
