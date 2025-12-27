@@ -4,10 +4,20 @@ providers = ["node"]
 aptPkgs = [
   "chromium",
   "fonts-liberation",
+  "libcups2",
   "libnss3",
+  "libatk1.0-0",
   "libatk-bridge2.0-0",
+  "libxrandr2",
+  "libxss1",
+  "libasound2",
   "libxshmfence1",
-  "libgbm1"
+  "libdrm2",
+  "libgbm1",
+  "libxdamage1",
+  "libgtk-3-0",
+  "libxcb1",
+  "libxcomposite1"
 ]
 
 [phases.install]
