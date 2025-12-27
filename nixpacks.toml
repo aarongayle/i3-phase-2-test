@@ -10,7 +10,7 @@ aptPkgs = [
   "libatk-bridge2.0-0",
   "libxrandr2",
   "libxss1",
-  "libasound2",
+  "libasound2t64",
   "libxshmfence1",
   "libdrm2",
   "libgbm1",
