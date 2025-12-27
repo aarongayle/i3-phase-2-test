@@ -88,9 +88,21 @@ router.get("/:clientId/headless/stream", async (req, res, next) => {
     });
 
   let closed = false;
-  req.on("close", () => {
+  let heartbeatTimer;
+  const markClosed = () => {
     closed = true;
-  });
+    if (heartbeatTimer) clearInterval(heartbeatTimer);
+  };
+  heartbeatTimer = setInterval(() => {
+    if (closed) return;
+    // SSE comment-based heartbeat to keep proxies/clients from closing idle connections
+    res.write(`: keepalive ${Date.now()}\n\n`);
+  }, 15000);
+
+  req.on("close", markClosed);
+  req.on("aborted", markClosed);
+  res.on?.("close", markClosed);
+  res.on?.("error", markClosed);
 
   try {
     send("progress", {
@@ -134,11 +146,13 @@ router.get("/:clientId/headless/stream", async (req, res, next) => {
         meta: result.meta,
         imageDataUrl: dataUrl,
       });
+      markClosed();
       res.end();
     }
   } catch (error) {
     if (!closed) {
       send("error", { message: error.message || "Headless report failed" });
+      markClosed();
       res.end();
     }
   }
