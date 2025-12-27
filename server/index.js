@@ -31,9 +31,9 @@ import intervalsRouter from "./routes/intervals.js";
 import metersRouter from "./routes/meters.js";
 import pelicanHistoryRouter from "./routes/pelican-history.js";
 import pelicanThermostatsRouter from "./routes/pelican-thermostats.js";
+import reportsHeadlessRouter from "./routes/reports-headless.js";
 import scheduleDetailsRouter from "./routes/schedule-details.js";
 import schedulesRouter from "./routes/schedules.js";
-import reportsHeadlessRouter from "./routes/reports-headless.js";
 import unitsRouter from "./routes/units.js";
 
 const app = express();
@@ -146,6 +146,7 @@ app.listen(PORT, () => {
 ║   - GET /api/meters/:clientId                              ║
 ║   - GET /api/schedules/:clientId/:date                     ║
 ║   - GET /api/schedule-details/:clientId/:date              ║
+║   - GET /api/reports/:clientId/headless          ║
 ║   - GET /api/units                                         ║
 ║   - GET /api/pelican/thermostats/:clientId                 ║
    ║   - GET /api/pelican/history/:clientId                     ║

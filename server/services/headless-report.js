@@ -70,7 +70,18 @@ export async function generateHeadlessReportImage({
   }
 
   progress("render-start", "Launching headless browser to render report");
-  const browser = await puppeteer.launch({ headless: "new" });
+  // In containers (Coolify/Docker) we need an explicit binary path plus
+  // no-sandbox flags. If PUPPETEER_EXECUTABLE_PATH is unset Puppeteer will
+  // fall back to its bundled Chrome (when available).
+  const launchOptions = {
+    headless: "new",
+    args: ["--no-sandbox", "--disable-setuid-sandbox"],
+  };
+  if (process.env.PUPPETEER_EXECUTABLE_PATH) {
+    launchOptions.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
+  }
+
+  const browser = await puppeteer.launch(launchOptions);
   try {
     const page = await browser.newPage();
     await page.setViewport({
