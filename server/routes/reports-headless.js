@@ -1,5 +1,4 @@
 import express from "express";
-import fs from "node:fs";
 import { generateHeadlessReportImage } from "../services/headless-report.js";
 
 const router = express.Router();
@@ -125,26 +124,11 @@ router.get("/:clientId/headless/stream", async (req, res, next) => {
       },
     });
 
-    const mimeFormat = normalizeFormat(format);
-    let dataUrl;
-    try {
-      const buffer = fs.readFileSync(result.imagePath);
-      dataUrl = `data:image/${mimeFormat};base64,${buffer.toString("base64")}`;
-    } catch (err) {
-      send("progress", {
-        stage: "read-image-error",
-        message: "Image generated but failed to embed in stream",
-        error: err.message,
-      });
-    }
-
     if (!closed) {
       send("done", {
         status: "ok",
-        imagePath: result.imagePath,
-        htmlPath: result.htmlPath,
         meta: result.meta,
-        imageDataUrl: dataUrl,
+        imageDataUrl: result.imageDataUrl,
       });
       markClosed();
       res.end();

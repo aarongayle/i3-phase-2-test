@@ -140,9 +140,10 @@ export async function generateHeadlessReportImage({
       });
 
     // Grab only the report content (prevents duplicated layouts if other nodes render outside the root)
+    let screenshotBuffer;
     const root = await page.$("#report-root");
     if (root) {
-      await root.screenshot({
+      screenshotBuffer = await root.screenshot({
         path: imagePath,
         type: clampFormat(format),
       });
@@ -151,7 +152,7 @@ export async function generateHeadlessReportImage({
       });
     } else {
       // Fallback to full page if the root isn't found
-      await page.screenshot({
+      screenshotBuffer = await page.screenshot({
         path: imagePath,
         fullPage: true,
         type: clampFormat(format),
@@ -160,17 +161,25 @@ export async function generateHeadlessReportImage({
         path: imagePath,
       });
     }
+
+    // Convert screenshot to data URI
+    const mimeType =
+      clampFormat(format) === "jpeg" ? "image/jpeg" : "image/png";
+    const imageDataUrl = `data:${mimeType};base64,${screenshotBuffer.toString(
+      "base64"
+    )}`;
+
+    progress("done", "Headless report complete", { imagePath, htmlPath });
+    return {
+      imagePath,
+      imageDataUrl,
+      htmlPath: saveHtml ? htmlPath : undefined,
+      meta: compiled.report?.meta || {},
+      pelican,
+    };
   } finally {
     await browser.close();
   }
-
-  progress("done", "Headless report complete", { imagePath, htmlPath });
-  return {
-    imagePath,
-    htmlPath: saveHtml ? htmlPath : undefined,
-    meta: compiled.report?.meta || {},
-    pelican,
-  };
 }
 
 async function loadPelicanAnalytics(
