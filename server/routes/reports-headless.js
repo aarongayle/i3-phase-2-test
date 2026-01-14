@@ -94,10 +94,13 @@ router.post("/:clientId/headless", async (req, res, next) => {
 router.get("/:clientId/headless/stream", async (req, res, next) => {
   req.setTimeout(0);
 
+  // SSE headers - disable all proxy/nginx buffering
   res.setHeader("Content-Type", "text/event-stream");
-  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
   res.setHeader("Connection", "keep-alive");
-  res.flushHeaders?.();
+  res.setHeader("X-Accel-Buffering", "no"); // nginx
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.flushHeaders();
 
   const { clientId } = req.params;
   const format = req.query.format || "png";
@@ -160,7 +163,7 @@ router.get("/:clientId/headless/stream", async (req, res, next) => {
         `[reports-headless] Sending complete event with imageUrl: ${imageUrl}`
       );
 
-      // Write the final event and ensure it's flushed before closing
+      // Write the final event
       const finalEvent = JSON.stringify({
         ts: new Date().toISOString(),
         stage: "complete",
@@ -169,15 +172,21 @@ router.get("/:clientId/headless/stream", async (req, res, next) => {
         imageUrl,
       });
 
-      res.write(`event: progress\ndata: ${finalEvent}\n\n`, () => {
-        // Callback fires when data is flushed to the OS
-        console.log(`[reports-headless] Complete event flushed`);
-        // Small delay to ensure proxy buffers are flushed
-        setTimeout(() => {
-          markClosed();
-          res.end();
-        }, 100);
-      });
+      res.write(`event: progress\ndata: ${finalEvent}\n\n`);
+
+      // Force flush with a comment and wait for proxy buffers
+      res.write(`: flush ${Date.now()}\n\n`);
+
+      console.log(
+        `[reports-headless] Complete event written, waiting for flush...`
+      );
+
+      // Wait longer to ensure proxy buffers are flushed, then end
+      setTimeout(() => {
+        console.log(`[reports-headless] Ending stream`);
+        markClosed();
+        res.end();
+      }, 500);
     }
   } catch (error) {
     console.error(`[reports-headless] Error in stream handler:`, error);
@@ -189,12 +198,13 @@ router.get("/:clientId/headless/stream", async (req, res, next) => {
         message: error.message || "Headless report failed",
       });
 
-      res.write(`event: progress\ndata: ${errorEvent}\n\n`, () => {
-        setTimeout(() => {
-          markClosed();
-          res.end();
-        }, 100);
-      });
+      res.write(`event: progress\ndata: ${errorEvent}\n\n`);
+      res.write(`: flush ${Date.now()}\n\n`);
+
+      setTimeout(() => {
+        markClosed();
+        res.end();
+      }, 500);
     }
   }
 });
