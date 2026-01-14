@@ -132,7 +132,8 @@ router.get("/:clientId/headless/stream", async (req, res, next) => {
     });
 
     if (!closed) {
-      send("done", {
+      send("progress", {
+        stage: "complete",
         status: "ok",
         meta: result.meta,
         imageDataUrl: result.imageDataUrl,
@@ -142,7 +143,11 @@ router.get("/:clientId/headless/stream", async (req, res, next) => {
     }
   } catch (error) {
     if (!closed) {
-      send("error", { message: error.message || "Headless report failed" });
+      send("progress", {
+        stage: "error",
+        status: "error",
+        message: error.message || "Headless report failed",
+      });
       markClosed();
       res.end();
     }
