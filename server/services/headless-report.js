@@ -147,7 +147,7 @@ export async function generateHeadlessReportImage({
         path: imagePath,
         type: clampFormat(format),
       });
-      progress("screenshot", "Captured report root screenshot");
+      progress("image-captured", "Captured report root screenshot");
     } else {
       // Fallback to full page if the root isn't found
       screenshotBuffer = await page.screenshot({
@@ -155,14 +155,16 @@ export async function generateHeadlessReportImage({
         fullPage: true,
         type: clampFormat(format),
       });
-      progress("screenshot", "Captured full page screenshot");
+      progress("image-captured", "Captured full page screenshot");
     }
 
     if (!screenshotBuffer || screenshotBuffer.length === 0) {
       throw new Error("Screenshot buffer is empty");
     }
-    
-    console.log(`[headless-report] Screenshot saved: ${imagePath} (${screenshotBuffer.length} bytes)`);
+
+    console.log(
+      `[headless-report] Screenshot saved: ${imagePath} (${screenshotBuffer.length} bytes)`
+    );
 
     return {
       imagePath,
@@ -173,7 +175,10 @@ export async function generateHeadlessReportImage({
     try {
       await browser.close();
     } catch (closeErr) {
-      console.warn("[headless-report] Error closing browser:", closeErr.message);
+      console.warn(
+        "[headless-report] Error closing browser:",
+        closeErr.message
+      );
     }
   }
 }
