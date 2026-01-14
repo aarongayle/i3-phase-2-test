@@ -1,7 +1,34 @@
 import express from "express";
+import fs from "node:fs";
+import path from "node:path";
 import { generateHeadlessReportImage } from "../services/headless-report.js";
 
 const router = express.Router();
+
+// Serve generated report images
+router.get("/:clientId/headless/image/:filename", (req, res) => {
+  const { clientId, filename } = req.params;
+
+  // Security: only allow specific filename patterns
+  if (!/^report-[\w.-]+\.(png|jpeg)$/.test(filename)) {
+    return res.status(400).json({ error: "Invalid filename" });
+  }
+
+  const imagePath = path.resolve(
+    `./campus-optimizer/reports/headless/${filename}`
+  );
+
+  if (!fs.existsSync(imagePath)) {
+    return res.status(404).json({ error: "Image not found" });
+  }
+
+  const ext = path.extname(filename).slice(1);
+  const mimeType = ext === "jpeg" ? "image/jpeg" : "image/png";
+
+  res.setHeader("Content-Type", mimeType);
+  res.setHeader("Cache-Control", "public, max-age=3600");
+  res.sendFile(imagePath);
+});
 
 function normalizeFormat(format) {
   const fmt = String(format || "png").toLowerCase();
@@ -47,25 +74,18 @@ router.post("/:clientId/headless", async (req, res, next) => {
       outDir,
     });
 
-    if (!result?.imageDataUrl) {
+    if (!result?.imagePath) {
       throw new Error("Report image was not generated");
     }
 
-    // Extract base64 data from data URI and send as binary
     const mimeFormat = normalizeFormat(format);
-    const base64Data = result.imageDataUrl.replace(
-      /^data:image\/\w+;base64,/,
-      ""
-    );
-    const imageBuffer = Buffer.from(base64Data, "base64");
-
     res.setHeader("Content-Type", `image/${mimeFormat}`);
     res.setHeader(
       "Content-Disposition",
       `inline; filename="report-${clientId}.${mimeFormat}"`
     );
 
-    res.send(imageBuffer);
+    res.sendFile(result.imagePath);
   } catch (error) {
     next(error);
   }
@@ -132,31 +152,20 @@ router.get("/:clientId/headless/stream", async (req, res, next) => {
     });
 
     if (!closed) {
+      // Build the URL for the client to fetch the image
+      const filename = path.basename(result.imagePath);
+      const imageUrl = `/api/reports/${clientId}/headless/image/${filename}`;
+
       console.log(
-        `[reports-headless] Sending complete event, imageDataUrl length: ${
-          result.imageDataUrl?.length || 0
-        }`
+        `[reports-headless] Sending complete event with imageUrl: ${imageUrl}`
       );
 
-      try {
-        // Send the complete event with the image data
-        res.write(`event: progress\n`);
-        res.write(
-          `data: ${JSON.stringify({
-            ts: new Date().toISOString(),
-            stage: "complete",
-            status: "ok",
-            meta: result.meta,
-            imageDataUrl: result.imageDataUrl,
-          })}\n\n`
-        );
-        console.log(`[reports-headless] Complete event written successfully`);
-      } catch (writeErr) {
-        console.error(
-          `[reports-headless] Failed to write complete event:`,
-          writeErr
-        );
-      }
+      send("progress", {
+        stage: "complete",
+        status: "ok",
+        meta: result.meta,
+        imageUrl,
+      });
 
       markClosed();
       res.end();

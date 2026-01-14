@@ -158,22 +158,14 @@ export async function generateHeadlessReportImage({
       progress("screenshot", "Captured full page screenshot");
     }
 
-    // Convert screenshot to data URI
-    const mimeType =
-      clampFormat(format) === "jpeg" ? "image/jpeg" : "image/png";
-    
     if (!screenshotBuffer || screenshotBuffer.length === 0) {
       throw new Error("Screenshot buffer is empty");
     }
     
-    const base64Data = screenshotBuffer.toString("base64");
-    const imageDataUrl = `data:${mimeType};base64,${base64Data}`;
-    
-    console.log(`[headless-report] Screenshot size: ${screenshotBuffer.length} bytes, base64 length: ${base64Data.length}`);
-    progress("encoding-complete", `Image encoded (${Math.round(base64Data.length / 1024)}KB base64)`);
+    console.log(`[headless-report] Screenshot saved: ${imagePath} (${screenshotBuffer.length} bytes)`);
 
     return {
-      imageDataUrl,
+      imagePath,
       meta: compiled.report?.meta || {},
       pelican,
     };
