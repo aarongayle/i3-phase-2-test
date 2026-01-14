@@ -147,9 +147,7 @@ export async function generateHeadlessReportImage({
         path: imagePath,
         type: clampFormat(format),
       });
-      progress("screenshot", "Captured report root screenshot", {
-        path: imagePath,
-      });
+      progress("screenshot", "Captured report root screenshot");
     } else {
       // Fallback to full page if the root isn't found
       screenshotBuffer = await page.screenshot({
@@ -157,9 +155,7 @@ export async function generateHeadlessReportImage({
         fullPage: true,
         type: clampFormat(format),
       });
-      progress("screenshot", "Captured full page screenshot", {
-        path: imagePath,
-      });
+      progress("screenshot", "Captured full page screenshot");
     }
 
     // Convert screenshot to data URI
@@ -169,11 +165,8 @@ export async function generateHeadlessReportImage({
       "base64"
     )}`;
 
-    progress("done", "Headless report complete", { imagePath, htmlPath });
     return {
-      imagePath,
       imageDataUrl,
-      htmlPath: saveHtml ? htmlPath : undefined,
       meta: compiled.report?.meta || {},
       pelican,
     };

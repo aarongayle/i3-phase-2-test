@@ -47,18 +47,25 @@ router.post("/:clientId/headless", async (req, res, next) => {
       outDir,
     });
 
-    if (!result?.imagePath) {
+    if (!result?.imageDataUrl) {
       throw new Error("Report image was not generated");
     }
 
+    // Extract base64 data from data URI and send as binary
     const mimeFormat = normalizeFormat(format);
+    const base64Data = result.imageDataUrl.replace(
+      /^data:image\/\w+;base64,/,
+      ""
+    );
+    const imageBuffer = Buffer.from(base64Data, "base64");
+
     res.setHeader("Content-Type", `image/${mimeFormat}`);
     res.setHeader(
       "Content-Disposition",
       `inline; filename="report-${clientId}.${mimeFormat}"`
     );
 
-    res.sendFile(result.imagePath);
+    res.send(imageBuffer);
   } catch (error) {
     next(error);
   }
