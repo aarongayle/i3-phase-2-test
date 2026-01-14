@@ -132,16 +132,37 @@ router.get("/:clientId/headless/stream", async (req, res, next) => {
     });
 
     if (!closed) {
-      send("progress", {
-        stage: "complete",
-        status: "ok",
-        meta: result.meta,
-        imageDataUrl: result.imageDataUrl,
-      });
+      console.log(
+        `[reports-headless] Sending complete event, imageDataUrl length: ${
+          result.imageDataUrl?.length || 0
+        }`
+      );
+
+      try {
+        // Send the complete event with the image data
+        res.write(`event: progress\n`);
+        res.write(
+          `data: ${JSON.stringify({
+            ts: new Date().toISOString(),
+            stage: "complete",
+            status: "ok",
+            meta: result.meta,
+            imageDataUrl: result.imageDataUrl,
+          })}\n\n`
+        );
+        console.log(`[reports-headless] Complete event written successfully`);
+      } catch (writeErr) {
+        console.error(
+          `[reports-headless] Failed to write complete event:`,
+          writeErr
+        );
+      }
+
       markClosed();
       res.end();
     }
   } catch (error) {
+    console.error(`[reports-headless] Error in stream handler:`, error);
     if (!closed) {
       send("progress", {
         stage: "error",
