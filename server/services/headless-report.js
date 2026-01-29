@@ -7,7 +7,7 @@ import { calculatePelicanAnalytics } from "../../lib/pelican-analytics.js";
 import { buildCompiledReport } from "../../lib/report-builder.js";
 
 const DEFAULT_OUT_DIR = path.resolve("./campus-optimizer/reports/headless");
-const DEFAULT_PELICAN_DAYS = 14;
+const DEFAULT_PELICAN_DAYS = 100;
 const API_BASE =
   process.env.HEADLESS_API_BASE ||
   `http://localhost:${process.env.PORT || 3001}/api`;
