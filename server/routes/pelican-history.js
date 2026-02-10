@@ -354,8 +354,15 @@ async function saveThermostatCoreSettingsToSupabase(
         serial_no: serialNo,
         client_id: Number(clientId),
         pelican_subdomain: siteSlug,
-        max_heat_setting: safeNumber(setting?.maxHeatSetting),
-        min_cool_setting: safeNumber(setting?.minCoolSetting),
+        // Avoid poisoning cache with zero defaults; treat as missing.
+        max_heat_setting:
+          safeNumber(setting?.maxHeatSetting) === 0
+            ? null
+            : safeNumber(setting?.maxHeatSetting),
+        min_cool_setting:
+          safeNumber(setting?.minCoolSetting) === 0
+            ? null
+            : safeNumber(setting?.minCoolSetting),
       };
     })
     .filter(Boolean);

@@ -20,6 +20,17 @@ const router = Router();
 
 const DEFAULT_DAYS = 2;
 
+function hasValidCoreSettingPair(setting) {
+  const maxHeatSetting = Number(setting?.maxHeatSetting);
+  const minCoolSetting = Number(setting?.minCoolSetting);
+  return (
+    Number.isFinite(maxHeatSetting) &&
+    Number.isFinite(minCoolSetting) &&
+    maxHeatSetting !== 0 &&
+    minCoolSetting !== 0
+  );
+}
+
 /**
  * Get summaries for a site/date, using cache first
  */
@@ -206,7 +217,12 @@ async function handleRequest(req, res) {
                 siteSerials
               );
               for (const setting of cachedSettings) {
-                thermostatSettingsBySerial.set(normalizeSerial(setting.serialNo), setting);
+                // Treat 0/0 cache rows as missing so we refetch from Pelican.
+                if (!hasValidCoreSettingPair(setting)) continue;
+                thermostatSettingsBySerial.set(
+                  normalizeSerial(setting.serialNo),
+                  setting
+                );
               }
               missingSerials = siteSerials.filter(
                 (serial) => !thermostatSettingsBySerial.has(normalizeSerial(serial))
@@ -227,7 +243,11 @@ async function handleRequest(req, res) {
             );
 
             for (const setting of fetchedSettings) {
-              thermostatSettingsBySerial.set(normalizeSerial(setting.serialNo), setting);
+              if (!hasValidCoreSettingPair(setting)) continue;
+              thermostatSettingsBySerial.set(
+                normalizeSerial(setting.serialNo),
+                setting
+              );
             }
 
             if (isSupabaseEnabled && fetchedSettings.length > 0) {
@@ -248,10 +268,10 @@ async function handleRequest(req, res) {
           for (const device of siteDevices) {
             const setting = thermostatSettingsBySerial.get(normalizeSerial(device.pelicanId));
             if (!setting) continue;
-            if (setting.maxHeatSetting !== null) {
+            if (setting.maxHeatSetting !== null && setting.maxHeatSetting !== 0) {
               device.maxHeatSetting = setting.maxHeatSetting;
             }
-            if (setting.minCoolSetting !== null) {
+            if (setting.minCoolSetting !== null && setting.minCoolSetting !== 0) {
               device.minCoolSetting = setting.minCoolSetting;
             }
           }
