@@ -3,7 +3,7 @@
 // Queries all Pelican sites for a client automatically
 
 import { Router } from "express";
-import { getBuildings } from "../../campus-optimizer/co-api.js";
+import { getBuildings, getDevices } from "../../campus-optimizer/co-api.js";
 import {
   fetchAllThermostatsForSiteDate,
   summarizeThermostatDay,
@@ -22,7 +22,23 @@ async function handleRequest(req, res) {
       return res.status(400).json({ error: "clientId is required" });
     }
 
-    const days = Math.min(Math.max(Number(daysParam) || DEFAULT_DAYS, 1), 7); // 1-7 days
+    const days = Math.min(Math.max(Number(daysParam) || DEFAULT_DAYS, 1), 7);
+
+    // Get CO devices for name lookup
+    let coDevices = [];
+    try {
+      coDevices = await getDevices(Number(clientId));
+    } catch (error) {
+      console.warn(`[Pelican Core Settings] Could not fetch CO devices: ${error.message}`);
+    }
+
+    // Build lookup map - CO devices may have various serial number fields
+    const coDevicesByName = new Map();
+    for (const d of coDevices) {
+      if (d?.Name) {
+        coDevicesByName.set(d.Name.toLowerCase(), d);
+      }
+    }
 
     // Get all buildings and extract unique Pelican sites with credentials
     const buildings = await getBuildings(Number(clientId));
@@ -48,7 +64,7 @@ async function handleRequest(req, res) {
       return res.status(404).json({ error: "No Pelican sites found for this client" });
     }
 
-    // Build list of dates to query (today and previous days)
+    // Build list of dates to query
     const dates = [];
     for (let i = 0; i < days; i++) {
       const d = new Date();
@@ -57,7 +73,7 @@ async function handleRequest(req, res) {
     }
 
     // Aggregate setpoints by serialNo across all days
-    const deviceMap = new Map(); // serialNo -> aggregated data
+    const deviceMap = new Map();
 
     for (const site of sites) {
       for (const queryDate of dates) {
@@ -74,12 +90,16 @@ async function handleRequest(req, res) {
             const key = `${site.siteSlug}:${summary.serialNo}`;
 
             if (!deviceMap.has(key)) {
+              // Try to find CO device by name match
+              const coDevice = summary.name ? coDevicesByName.get(summary.name.toLowerCase()) : null;
+
               deviceMap.set(key, {
                 pelicanId: summary.serialNo,
-                name: summary.name,
+                name: coDevice?.Name || summary.name || summary.serialNo,
                 groupName: summary.groupName,
                 siteSlug: site.siteSlug,
                 buildingName: site.buildingName,
+                coDeviceId: coDevice?.Id || null,
                 maxHeat: null,
                 minHeat: null,
                 maxCool: null,
@@ -88,6 +108,15 @@ async function handleRequest(req, res) {
             }
 
             const device = deviceMap.get(key);
+
+            // Update name if we find a better one
+            if (!device.name || device.name === device.pelicanId) {
+              if (summary.name) {
+                const coDevice = coDevicesByName.get(summary.name.toLowerCase());
+                device.name = coDevice?.Name || summary.name;
+                device.coDeviceId = coDevice?.Id || device.coDeviceId;
+              }
+            }
 
             // Aggregate min/max across days
             if (summary.maxHeatSetpoint !== null) {
@@ -124,6 +153,7 @@ async function handleRequest(req, res) {
       groupName: d.groupName,
       siteSlug: d.siteSlug,
       buildingName: d.buildingName,
+      coDeviceId: d.coDeviceId,
       heatingOccupiedSetpoint: d.maxHeat,
       heatingUnoccupiedSetpoint: d.minHeat,
       coolingOccupiedSetpoint: d.minCool,

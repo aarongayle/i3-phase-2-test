@@ -446,6 +446,10 @@ function processFullResponse(parsed, date, overallStart) {
       const serialNo = String(entry?.serialNo || "").trim();
       if (!serialNo || !Array.isArray(entry.History)) continue;
 
+      // Capture name/groupName from thermostat level (may also be in History entries)
+      const thermostatName = String(entry?.name || "").trim();
+      const thermostatGroupName = String(entry?.groupName || "").trim();
+
       // Filter History entries by date and collect
       const entries = [];
       for (const historyEntry of entry.History) {
@@ -462,6 +466,8 @@ function processFullResponse(parsed, date, overallStart) {
 
       thermostats.push({
         serialNo,
+        name: thermostatName,
+        groupName: thermostatGroupName,
         entries,
         entryCount: entries.length,
       });
@@ -490,8 +496,9 @@ function processFullResponse(parsed, date, overallStart) {
 function summarizeThermostatDay(thermostat, date) {
   const entries = Array.isArray(thermostat?.entries) ? thermostat.entries : [];
   const serialNo = String(thermostat?.serialNo || "").trim();
-  const name = entries[0]?.name || "";
-  const groupName = entries[0]?.groupName || "";
+  // Use thermostat-level name first, fall back to first entry's name
+  const name = thermostat?.name || entries[0]?.name || "";
+  const groupName = thermostat?.groupName || entries[0]?.groupName || "";
   const dayStartMs = toMillis(`${date}T00:00:00`);
   const dayEndMs = toMillis(`${date}T23:59:59.999`);
 
