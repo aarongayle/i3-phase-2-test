@@ -923,4 +923,7 @@ export {
   toPelicanDateTime,
   parseLocalDate,
   safeNumber,
+  getCachedSummariesFromSupabase,
+  saveSummariesToSupabase,
+  isSupabaseEnabled,
 };

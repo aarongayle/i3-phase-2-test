@@ -1,17 +1,55 @@
 // Express Route: GET/POST /api/pelican/core-settings/:clientId
-// Wrapper around pelican-history that renames setpoint fields to occupied/unoccupied terminology
-// Queries all Pelican sites for a client automatically
+// Returns occupied/unoccupied setpoints aggregated across multiple days
+// Uses Supabase cache first, falls back to Pelican API
 
 import { Router } from "express";
 import { getBuildings, getDevices } from "../../campus-optimizer/co-api.js";
 import {
+  getCredentialsForSite,
   fetchAllThermostatsForSiteDate,
   summarizeThermostatDay,
+  getCachedSummariesFromSupabase,
+  saveSummariesToSupabase,
+  isSupabaseEnabled,
 } from "./pelican-history.js";
 
 const router = Router();
 
 const DEFAULT_DAYS = 2;
+
+/**
+ * Get summaries for a site/date, using cache first
+ */
+async function getSummariesForSiteDate(clientId, siteSlug, username, password, date) {
+  // Try Supabase cache first
+  if (isSupabaseEnabled) {
+    try {
+      const cached = await getCachedSummariesFromSupabase(clientId, siteSlug, date);
+      if (cached.length > 0) {
+        console.log(`[Pelican Core Settings] ✅ Cache hit for ${siteSlug}/${date}: ${cached.length} thermostats`);
+        return cached;
+      }
+    } catch (error) {
+      console.warn(`[Pelican Core Settings] Cache lookup failed: ${error.message}`);
+    }
+  }
+
+  // Fall back to Pelican API
+  console.log(`[Pelican Core Settings] Cache miss, fetching from Pelican: ${siteSlug}/${date}`);
+  const thermostats = await fetchAllThermostatsForSiteDate(siteSlug, username, password, date);
+  const summaries = thermostats.map((t) => summarizeThermostatDay(t, date));
+
+  // Save to cache for next time
+  if (isSupabaseEnabled && summaries.length > 0) {
+    try {
+      await saveSummariesToSupabase(summaries, clientId, siteSlug);
+    } catch (error) {
+      console.warn(`[Pelican Core Settings] Failed to save to cache: ${error.message}`);
+    }
+  }
+
+  return summaries;
+}
 
 async function handleRequest(req, res) {
   try {
@@ -32,7 +70,6 @@ async function handleRequest(req, res) {
       console.warn(`[Pelican Core Settings] Could not fetch CO devices: ${error.message}`);
     }
 
-    // Build lookup map - CO devices may have various serial number fields
     const coDevicesByName = new Map();
     for (const d of coDevices) {
       if (d?.Name) {
@@ -40,7 +77,7 @@ async function handleRequest(req, res) {
       }
     }
 
-    // Get all buildings and extract unique Pelican sites with credentials
+    // Get all buildings and extract unique Pelican sites
     const buildings = await getBuildings(Number(clientId));
     const seen = new Set();
     const sites = [];
@@ -78,19 +115,18 @@ async function handleRequest(req, res) {
     for (const site of sites) {
       for (const queryDate of dates) {
         try {
-          const thermostats = await fetchAllThermostatsForSiteDate(
+          const summaries = await getSummariesForSiteDate(
+            clientId,
             site.siteSlug,
             site.username,
             site.password,
             queryDate
           );
 
-          for (const t of thermostats) {
-            const summary = summarizeThermostatDay(t, queryDate);
+          for (const summary of summaries) {
             const key = `${site.siteSlug}:${summary.serialNo}`;
 
             if (!deviceMap.has(key)) {
-              // Try to find CO device by name match
               const coDevice = summary.name ? coDevicesByName.get(summary.name.toLowerCase()) : null;
 
               deviceMap.set(key, {
@@ -141,7 +177,7 @@ async function handleRequest(req, res) {
             }
           }
         } catch (error) {
-          console.error(`[Pelican Core Settings] Error fetching ${site.siteSlug} for ${queryDate}:`, error.message);
+          console.error(`[Pelican Core Settings] Error for ${site.siteSlug}/${queryDate}:`, error.message);
         }
       }
     }
