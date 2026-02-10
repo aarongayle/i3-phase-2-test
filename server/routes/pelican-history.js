@@ -906,3 +906,14 @@ router.get("/:clientId", async (req, res) => {
 });
 
 export default router;
+
+// Export shared utilities for other pelican routes
+export {
+  getCredentialsForSite,
+  fetchAllThermostatsForSiteDate,
+  summarizeThermostatDay,
+  buildHistoryTransaction,
+  toPelicanDateTime,
+  parseLocalDate,
+  safeNumber,
+};

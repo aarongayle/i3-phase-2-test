@@ -29,6 +29,7 @@ import datesRouter from "./routes/dates.js";
 import devicesRouter from "./routes/devices.js";
 import intervalsRouter from "./routes/intervals.js";
 import metersRouter from "./routes/meters.js";
+import pelicanCoreSettingsRouter from "./routes/pelican-core-settings.js";
 import pelicanHistoryRouter from "./routes/pelican-history.js";
 import pelicanThermostatsRouter from "./routes/pelican-thermostats.js";
 import reportsHeadlessRouter from "./routes/reports-headless.js";
@@ -94,6 +95,7 @@ app.use("/api/units", unitsRouter);
 app.use("/api/reports", reportsHeadlessRouter);
 app.use("/api/pelican/thermostats", pelicanThermostatsRouter);
 app.use("/api/pelican/history", pelicanHistoryRouter);
+app.use("/api/pelican/core-settings", pelicanCoreSettingsRouter);
 
 // 404 handler for API routes
 app.use("/api/*path", (req, res) => {
@@ -149,8 +151,9 @@ app.listen(PORT, () => {
 ║   - GET /api/reports/:clientId/headless          ║
 ║   - GET /api/units                                         ║
 ║   - GET /api/pelican/thermostats/:clientId                 ║
-   ║   - GET /api/pelican/history/:clientId                     ║
-   ║                                                            ║
+║   - GET /api/pelican/history/:clientId                     ║
+║   - GET /api/pelican/core-settings/:clientId               ║
+║                                                            ║
 ╚════════════════════════════════════════════════════════════╝
   `);
 });
