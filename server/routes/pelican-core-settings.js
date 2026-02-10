@@ -5,8 +5,11 @@
 import { Router } from "express";
 import { getBuildings, getDevices } from "../../campus-optimizer/co-api.js";
 import {
-  getCredentialsForSite,
   fetchAllThermostatsForSiteDate,
+  fetchThermostatCoreSettingsForSite,
+  getCachedThermostatSettingsFromSupabase,
+  normalizeSerial,
+  saveThermostatCoreSettingsToSupabase,
   summarizeThermostatDay,
   getCachedSummariesFromSupabase,
   saveSummariesToSupabase,
@@ -140,6 +143,8 @@ async function handleRequest(req, res) {
                 minHeat: null,
                 maxCool: null,
                 minCool: null,
+                maxHeatSetting: null,
+                minCoolSetting: null,
               });
             }
 
@@ -180,6 +185,82 @@ async function handleRequest(req, res) {
           console.error(`[Pelican Core Settings] Error for ${site.siteSlug}/${queryDate}:`, error.message);
         }
       }
+
+      const siteDevices = Array.from(deviceMap.values()).filter(
+        (device) => device.siteSlug === site.siteSlug
+      );
+      const siteSerials = Array.from(
+        new Set(siteDevices.map((device) => String(device.pelicanId || "").trim()).filter(Boolean))
+      );
+
+      if (siteSerials.length > 0) {
+        try {
+          const thermostatSettingsBySerial = new Map();
+          let missingSerials = siteSerials;
+
+          if (isSupabaseEnabled) {
+            try {
+              const cachedSettings = await getCachedThermostatSettingsFromSupabase(
+                clientId,
+                site.siteSlug,
+                siteSerials
+              );
+              for (const setting of cachedSettings) {
+                thermostatSettingsBySerial.set(normalizeSerial(setting.serialNo), setting);
+              }
+              missingSerials = siteSerials.filter(
+                (serial) => !thermostatSettingsBySerial.has(normalizeSerial(serial))
+              );
+            } catch (cacheError) {
+              console.warn(
+                `[Pelican Core Settings] Thermostat settings cache lookup failed for ${site.siteSlug}: ${cacheError.message}`
+              );
+            }
+          }
+
+          if (missingSerials.length > 0) {
+            const fetchedSettings = await fetchThermostatCoreSettingsForSite(
+              site.siteSlug,
+              site.username,
+              site.password,
+              missingSerials
+            );
+
+            for (const setting of fetchedSettings) {
+              thermostatSettingsBySerial.set(normalizeSerial(setting.serialNo), setting);
+            }
+
+            if (isSupabaseEnabled && fetchedSettings.length > 0) {
+              try {
+                await saveThermostatCoreSettingsToSupabase(
+                  fetchedSettings,
+                  clientId,
+                  site.siteSlug
+                );
+              } catch (saveError) {
+                console.warn(
+                  `[Pelican Core Settings] Failed to cache thermostat settings for ${site.siteSlug}: ${saveError.message}`
+                );
+              }
+            }
+          }
+
+          for (const device of siteDevices) {
+            const setting = thermostatSettingsBySerial.get(normalizeSerial(device.pelicanId));
+            if (!setting) continue;
+            if (setting.maxHeatSetting !== null) {
+              device.maxHeatSetting = setting.maxHeatSetting;
+            }
+            if (setting.minCoolSetting !== null) {
+              device.minCoolSetting = setting.minCoolSetting;
+            }
+          }
+        } catch (error) {
+          console.warn(
+            `[Pelican Core Settings] Thermostat settings fetch failed for ${site.siteSlug}: ${error.message}`
+          );
+        }
+      }
     }
 
     // Transform to final format
@@ -194,6 +275,8 @@ async function handleRequest(req, res) {
       heatingUnoccupiedSetpoint: d.minHeat,
       coolingOccupiedSetpoint: d.minCool,
       coolingUnoccupiedSetpoint: d.maxCool,
+      maxHeatSetting: d.maxHeatSetting,
+      minCoolSetting: d.minCoolSetting,
     }));
 
     return res.status(200).json({

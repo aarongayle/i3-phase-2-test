@@ -11,6 +11,11 @@ const router = Router();
 const SUPABASE_DAILY_TABLE = "pelican_daily_summaries";
 const SUPABASE_THERMOSTAT_TABLE = "pelican_thermostats";
 const isSupabaseEnabled = Boolean(supabase);
+const THERMOSTAT_VALUE_TEMPLATE = Object.freeze({
+  serialNo: "",
+  maxHeatSetting: "",
+  minCoolSetting: "",
+});
 
 // History value template (matching pelican/history.js)
 const HISTORY_VALUE_TEMPLATE = Object.freeze({
@@ -151,6 +156,22 @@ function rowToSummary(row) {
   };
 }
 
+function normalizeSerial(value) {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase();
+}
+
+function thermostatRowToSettings(row) {
+  const serialNo = String(row?.serial_no || "").trim();
+  if (!serialNo) return null;
+  return {
+    serialNo,
+    maxHeatSetting: safeNumber(row?.max_heat_setting),
+    minCoolSetting: safeNumber(row?.min_cool_setting),
+  };
+}
+
 async function getCachedSummariesFromSupabase(clientId, siteSlug, date) {
   if (!isSupabaseEnabled) return [];
 
@@ -202,6 +223,152 @@ async function saveSummariesToSupabase(summaries, clientId, siteSlug) {
 
   await upsertThermostats(thermostatRows);
   await upsertDailySummaries(dailyRows);
+}
+
+function buildThermostatTransaction(selection) {
+  return [
+    {
+      request: "get",
+      object: "Thermostat",
+      selection,
+      value: { ...THERMOSTAT_VALUE_TEMPLATE },
+    },
+  ];
+}
+
+async function fetchThermostatCoreSettingsForSite(
+  siteSlug,
+  username,
+  password,
+  serialNumbers
+) {
+  if (!siteSlug) {
+    throw new Error("siteSlug is required");
+  }
+  if (!username || !password) {
+    throw new Error("username and password are required");
+  }
+
+  const normalizedSerials = Array.from(
+    new Set(
+      (Array.isArray(serialNumbers) ? serialNumbers : [])
+        .map((serial) => String(serial || "").trim())
+        .filter(Boolean)
+    )
+  );
+
+  const selection =
+    normalizedSerials.length > 0
+      ? { ThermostatSerialNo: normalizedSerials }
+      : {};
+  const transactions = buildThermostatTransaction(selection);
+  const pelicanUrl = `https://${siteSlug}.officeclimatecontrol.net/api.cgi`;
+
+  const response = await fetch(pelicanUrl, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      accept: "application/json",
+    },
+    body: JSON.stringify({ username, password, transactions }),
+  });
+
+  if (!response.ok) {
+    const details = await response.text().catch(() => "");
+    throw new Error(
+      `Pelican thermostat request failed (${response.status}): ${details.slice(
+        0,
+        200
+      )}`.trim()
+    );
+  }
+
+  const parsed = await response.json();
+  const payload = parsed?.result?.[0]?.Thermostat;
+  const thermostats = Array.isArray(payload)
+    ? payload
+    : payload && typeof payload === "object"
+    ? [payload]
+    : [];
+
+  return thermostats
+    .map((item) => ({
+      serialNo: String(item?.serialNo || "").trim(),
+      maxHeatSetting: safeNumber(item?.maxHeatSetting),
+      minCoolSetting: safeNumber(item?.minCoolSetting),
+    }))
+    .filter((item) => item.serialNo);
+}
+
+async function getCachedThermostatSettingsFromSupabase(
+  clientId,
+  siteSlug,
+  serialNumbers
+) {
+  if (!isSupabaseEnabled) return [];
+
+  const normalizedSerials = Array.from(
+    new Set(
+      (Array.isArray(serialNumbers) ? serialNumbers : [])
+        .map((serial) => String(serial || "").trim())
+        .filter(Boolean)
+    )
+  );
+
+  if (!normalizedSerials.length) return [];
+
+  const { data, error } = await supabase
+    .from(SUPABASE_THERMOSTAT_TABLE)
+    .select("serial_no, max_heat_setting, min_cool_setting")
+    .eq("pelican_subdomain", siteSlug)
+    .eq("client_id", Number(clientId))
+    .in("serial_no", normalizedSerials);
+
+  if (error) {
+    throw new Error(`Supabase thermostat settings fetch failed: ${error.message}`);
+  }
+
+  return Array.isArray(data)
+    ? data.map(thermostatRowToSettings).filter(Boolean)
+    : [];
+}
+
+async function saveThermostatCoreSettingsToSupabase(
+  thermostatSettings,
+  clientId,
+  siteSlug
+) {
+  if (
+    !isSupabaseEnabled ||
+    !Array.isArray(thermostatSettings) ||
+    !thermostatSettings.length
+  ) {
+    return;
+  }
+
+  const rows = thermostatSettings
+    .map((setting) => {
+      const serialNo = String(setting?.serialNo || "").trim();
+      if (!serialNo) return null;
+      return {
+        serial_no: serialNo,
+        client_id: Number(clientId),
+        pelican_subdomain: siteSlug,
+        max_heat_setting: safeNumber(setting?.maxHeatSetting),
+        min_cool_setting: safeNumber(setting?.minCoolSetting),
+      };
+    })
+    .filter(Boolean);
+
+  if (!rows.length) return;
+
+  const { error } = await supabase
+    .from(SUPABASE_THERMOSTAT_TABLE)
+    .upsert(rows, { onConflict: "serial_no" });
+
+  if (error) {
+    throw new Error(`Supabase thermostat settings upsert failed: ${error.message}`);
+  }
 }
 
 function isSetbackActive(entry) {
@@ -918,12 +1085,16 @@ export default router;
 export {
   getCredentialsForSite,
   fetchAllThermostatsForSiteDate,
+  fetchThermostatCoreSettingsForSite,
   summarizeThermostatDay,
   buildHistoryTransaction,
   toPelicanDateTime,
   parseLocalDate,
   safeNumber,
   getCachedSummariesFromSupabase,
+  getCachedThermostatSettingsFromSupabase,
   saveSummariesToSupabase,
+  saveThermostatCoreSettingsToSupabase,
+  normalizeSerial,
   isSupabaseEnabled,
 };
