@@ -35,6 +35,19 @@ function normalizeFormat(format) {
   return fmt === "jpeg" || fmt === "jpg" ? "jpeg" : "png";
 }
 
+function buildImageUrl(clientId, imagePath) {
+  return `/api/reports/${clientId}/headless/image/${path.basename(imagePath)}`;
+}
+
+function buildImageUrlsById(clientId, imagePathsById) {
+  return Object.fromEntries(
+    Object.entries(imagePathsById || {}).map(([imageId, imagePath]) => [
+      imageId,
+      buildImageUrl(clientId, imagePath),
+    ])
+  );
+}
+
 function parseBoolean(value, fallback) {
   if (value === undefined) return fallback;
   if (typeof value === "boolean") return value;
@@ -61,6 +74,7 @@ router.post("/:clientId/headless", async (req, res, next) => {
       height = 900,
       saveHtml = true,
       useCache = true,
+      splitImages = false,
       outDir,
     } = req.body || {};
 
@@ -71,8 +85,20 @@ router.post("/:clientId/headless", async (req, res, next) => {
       height,
       saveHtml,
       useCache,
+      splitImages,
       outDir,
     });
+
+    if (splitImages) {
+      if (!result?.imagePathsById || Object.keys(result.imagePathsById).length === 0) {
+        throw new Error("Report images were not generated");
+      }
+
+      return res.json({
+        meta: result.meta,
+        images: buildImageUrlsById(clientId, result.imagePathsById),
+      });
+    }
 
     if (!result?.imagePath) {
       throw new Error("Report image was not generated");
@@ -108,6 +134,7 @@ router.get("/:clientId/headless/stream", async (req, res, next) => {
   const height = Number(req.query.height) || 900;
   const saveHtml = parseBoolean(req.query.saveHtml, true);
   const useCache = parseBoolean(req.query.useCache, true);
+  const splitImages = parseBoolean(req.query.splitImages, false);
   const outDir = req.query.outDir;
 
   const send = (event, payload) =>
@@ -147,6 +174,7 @@ router.get("/:clientId/headless/stream", async (req, res, next) => {
       height,
       saveHtml,
       useCache,
+      splitImages,
       outDir,
       onProgress: (payload) => {
         if (closed) return;
@@ -155,22 +183,27 @@ router.get("/:clientId/headless/stream", async (req, res, next) => {
     });
 
     if (!closed) {
-      // Build the URL for the client to fetch the image
-      const filename = path.basename(result.imagePath);
-      const imageUrl = `/api/reports/${clientId}/headless/image/${filename}`;
-
-      console.log(
-        `[reports-headless] Sending complete event with imageUrl: ${imageUrl}`
-      );
-
-      // Write the final event
-      const finalEvent = JSON.stringify({
+      const finalPayload = {
         ts: new Date().toISOString(),
         stage: "complete",
         status: "ok",
         meta: result.meta,
-        imageUrl,
-      });
+      };
+
+      if (splitImages) {
+        finalPayload.images = buildImageUrlsById(clientId, result.imagePathsById);
+        console.log(
+          `[reports-headless] Sending complete event with ${Object.keys(finalPayload.images).length} images`
+        );
+      } else {
+        finalPayload.imageUrl = buildImageUrl(clientId, result.imagePath);
+        console.log(
+          `[reports-headless] Sending complete event with imageUrl: ${finalPayload.imageUrl}`
+        );
+      }
+
+      // Write the final event
+      const finalEvent = JSON.stringify(finalPayload);
 
       res.write(`event: progress\ndata: ${finalEvent}\n\n`);
 

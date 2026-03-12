@@ -11,6 +11,40 @@ const DEFAULT_PELICAN_DAYS = 100;
 const API_BASE =
   process.env.HEADLESS_API_BASE ||
   `http://localhost:${process.env.PORT || 3001}/api`;
+const SPLIT_IMAGE_TARGETS = [
+  { id: "topRuntime", selector: "#barTopRuntime", label: "Top runtime" },
+  {
+    id: "weeklyRuntime",
+    selector: "#lineWeekly",
+    label: "Weekly runtime",
+  },
+  { id: "dailyEnergyUse", selector: "#lineEnergy", label: "Daily energy use" },
+  {
+    id: "dailyPeakDemand",
+    selector: "#linePeakDemand",
+    label: "Daily peak demand",
+  },
+  {
+    id: "scheduleVsOccupancy",
+    selector: "#pelicanComparison",
+    label: "Schedule vs occupancy",
+  },
+  {
+    id: "setpointTrends",
+    selector: "#pelicanSetpoints",
+    label: "Setpoint trends",
+  },
+  {
+    id: "intervalLatestDay",
+    selector: "#lineIntervalLatest",
+    label: "Interval latest day",
+  },
+  {
+    id: "intervalAverageDay",
+    selector: "#lineIntervalAverage",
+    label: "Interval average day",
+  },
+];
 
 function ensureDir(dirPath) {
   fs.mkdirSync(dirPath, { recursive: true });
@@ -59,6 +93,61 @@ function resolveChromePath() {
   return candidates.find((p) => fs.existsSync(p)) || null;
 }
 
+function buildImagePath(outDir, sanitizedId, format, imageId) {
+  const suffix = imageId ? `-${imageId}` : "";
+  return path.join(outDir, `report-${sanitizedId}${suffix}.${clampFormat(format)}`);
+}
+
+async function captureSplitImages(page, { outDir, sanitizedId, format, progress }) {
+  const imagePathsById = {};
+  const imageType = clampFormat(format);
+
+  for (const target of SPLIT_IMAGE_TARGETS) {
+    const chartHandle = await page.$(target.selector);
+    if (!chartHandle) {
+      continue;
+    }
+
+    const cardHandle = await chartHandle.evaluateHandle(
+      (element) => element.closest(".card") || element
+    );
+    const captureHandle =
+      typeof cardHandle.asElement === "function"
+        ? cardHandle.asElement()
+        : null;
+
+    if (!captureHandle) {
+      await chartHandle.dispose();
+      await cardHandle.dispose();
+      continue;
+    }
+
+    const imagePath = buildImagePath(outDir, sanitizedId, format, target.id);
+    const screenshotBuffer = await captureHandle.screenshot({
+      path: imagePath,
+      type: imageType,
+    });
+
+    await chartHandle.dispose();
+    await cardHandle.dispose();
+
+    if (!screenshotBuffer || screenshotBuffer.length === 0) {
+      throw new Error(`Screenshot buffer is empty for ${target.id}`);
+    }
+
+    imagePathsById[target.id] = imagePath;
+    progress("image-captured", `Captured ${target.label} chart`, {
+      imageId: target.id,
+    });
+  }
+
+  if (Object.keys(imagePathsById).length === 0) {
+    throw new Error("No report chart images were generated");
+  }
+
+  return imagePathsById;
+}
+
 export async function generateHeadlessReportImage({
   clientId,
   outDir = DEFAULT_OUT_DIR,
@@ -67,6 +156,7 @@ export async function generateHeadlessReportImage({
   height = 900,
   saveHtml = true,
   useCache = true,
+  splitImages = false,
   pelicanDays = DEFAULT_PELICAN_DAYS,
   onProgress,
 }) {
@@ -98,10 +188,7 @@ export async function generateHeadlessReportImage({
 
   const sanitizedId = String(clientId).replace(/[^\w.-]/g, "_");
   const htmlPath = path.join(outDir, `report-${sanitizedId}.html`);
-  const imagePath = path.join(
-    outDir,
-    `report-${sanitizedId}.${clampFormat(format)}`
-  );
+  const imagePath = buildImagePath(outDir, sanitizedId, format);
 
   if (saveHtml) {
     fs.writeFileSync(htmlPath, html, "utf8");
@@ -128,7 +215,7 @@ export async function generateHeadlessReportImage({
       height: Number(height) || 900,
     });
 
-    await page.setContent(buildHtml(fullData), { waitUntil: "networkidle0" });
+    await page.setContent(html, { waitUntil: "networkidle0" });
     await page
       .waitForFunction("window.__reportReady === true", {
         timeout: 60_000,
@@ -138,6 +225,25 @@ export async function generateHeadlessReportImage({
           "[headless-report] Timed out waiting for report to signal readiness; continuing with screenshot"
         );
       });
+
+    if (splitImages) {
+      const imagePathsById = await captureSplitImages(page, {
+        outDir,
+        sanitizedId,
+        format,
+        progress,
+      });
+
+      console.log(
+        `[headless-report] Saved ${Object.keys(imagePathsById).length} split report images`
+      );
+
+      return {
+        imagePathsById,
+        meta: compiled.report?.meta || {},
+        pelican,
+      };
+    }
 
     // Grab only the report content (prevents duplicated layouts if other nodes render outside the root)
     let screenshotBuffer;
