@@ -1002,18 +1002,29 @@ router.get("/:clientId", async (req, res) => {
             0
           );
 
-          console.log(
-            `[Pelican History API] ✅ Cache hit in Supabase for ${cachedSummaries.length} thermostats`
-          );
+          // Only trust the cache when at least one thermostat has actual history
+          // entries. If every cached row has entryCount=0, the cache was likely
+          // written when this date was in the future (no data existed yet at write
+          // time). Skip the stale cache and re-fetch from the Pelican API so that
+          // now-available data is returned and the cache is healed.
+          if (cachedTotalEntries > 0) {
+            console.log(
+              `[Pelican History API] ✅ Cache hit in Supabase for ${cachedSummaries.length} thermostats (${cachedTotalEntries} total entries)`
+            );
 
-          return res.status(200).json({
-            thermostats: cachedSummaries,
-            query: { clientId, siteSlug, date },
-            thermostatCount: cachedSummaries.length,
-            totalEntries: cachedTotalEntries,
-            summarized: true,
-            cache: { source: "supabase", hit: true },
-          });
+            return res.status(200).json({
+              thermostats: cachedSummaries,
+              query: { clientId, siteSlug, date },
+              thermostatCount: cachedSummaries.length,
+              totalEntries: cachedTotalEntries,
+              summarized: true,
+              cache: { source: "supabase", hit: true },
+            });
+          }
+
+          console.log(
+            `[Pelican History API] ⚠️ Cache has ${cachedSummaries.length} rows for ${date} but all have 0 entries — treating as stale, re-fetching from Pelican`
+          );
         }
       } catch (cacheError) {
         console.error(
@@ -1060,8 +1071,14 @@ router.get("/:clientId", async (req, res) => {
       `[Pelican History API] ===========================================\n`
     );
 
-    // Persist summaries to Supabase for future cache hits
-    if (isSupabaseEnabled) {
+    // Persist summaries to Supabase for future cache hits.
+    // Skip caching when every thermostat has 0 entries — this typically means
+    // the date had no data yet (e.g. a future or same-day request). Caching
+    // such results would poison the cache and hide real data on future fetches.
+    const hasAnyEntries = summarizedThermostats.some(
+      (t) => (t.entryCount ?? 0) > 0
+    );
+    if (isSupabaseEnabled && hasAnyEntries) {
       try {
         await saveSummariesToSupabase(
           summarizedThermostats,
@@ -1074,6 +1091,10 @@ router.get("/:clientId", async (req, res) => {
           supabaseError
         );
       }
+    } else if (isSupabaseEnabled && !hasAnyEntries) {
+      console.log(
+        `[Pelican History API] ⚠️ Skipping cache write for ${date} — no thermostat entries returned`
+      );
     }
 
     return res.status(200).json(responseData);
