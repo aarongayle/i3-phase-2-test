@@ -574,6 +574,13 @@ export function buildHtml(data) {
   </div>
 
   <script>
+    if (window.Chart) {
+      // Headless screenshots should capture the fully-drawn chart, not an
+      // in-progress animation frame.
+      Chart.defaults.animation = false;
+      Chart.defaults.responsiveAnimationDuration = 0;
+    }
+
     const topRuntimeLabels = ${JSON.stringify(topRuntimeLabels)};
     const topRuntimeData = ${JSON.stringify(topRuntimeData)};
     const weeklyLabels = ${JSON.stringify(labels)};
@@ -932,7 +939,13 @@ export function buildHtml(data) {
       const d = new Date(dateStr);
       return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
     }
-    window.__reportReady = true;
+    // Wait until the browser has had a chance to lay out and paint the charts
+    // before signaling Puppeteer to capture screenshots.
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        window.__reportReady = true;
+      });
+    });
   </script>
 </body>
 </html>`;

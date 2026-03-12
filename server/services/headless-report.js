@@ -226,6 +226,17 @@ export async function generateHeadlessReportImage({
         );
       });
 
+    // Give the browser one final beat to flush layout/paint work after the
+    // page signals readiness.
+    await page.evaluate(
+      () =>
+        new Promise((resolve) => {
+          requestAnimationFrame(() => {
+            requestAnimationFrame(resolve);
+          });
+        })
+    );
+
     if (splitImages) {
       const imagePathsById = await captureSplitImages(page, {
         outDir,

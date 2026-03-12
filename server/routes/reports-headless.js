@@ -26,7 +26,9 @@ router.get("/:clientId/headless/image/:filename", (req, res) => {
   const mimeType = ext === "jpeg" ? "image/jpeg" : "image/png";
 
   res.setHeader("Content-Type", mimeType);
-  res.setHeader("Cache-Control", "public, max-age=3600");
+  // These files are regenerated in place using stable filenames, so browsers
+  // and proxies must not reuse older copies.
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
   res.sendFile(imagePath);
 });
 
@@ -36,7 +38,15 @@ function normalizeFormat(format) {
 }
 
 function buildImageUrl(clientId, imagePath) {
-  return `/api/reports/${clientId}/headless/image/${path.basename(imagePath)}`;
+  let cacheBust = Date.now();
+  try {
+    cacheBust = Math.trunc(fs.statSync(imagePath).mtimeMs);
+  } catch (_err) {
+    // Fall back to current time if the image file isn't stat-able yet.
+  }
+  return `/api/reports/${clientId}/headless/image/${path.basename(
+    imagePath
+  )}?v=${cacheBust}`;
 }
 
 function buildImageUrlsById(clientId, imagePathsById) {
