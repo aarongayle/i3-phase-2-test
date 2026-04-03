@@ -3,7 +3,7 @@
 // Uses Supabase cache first, falls back to Pelican API
 
 import { Router } from "express";
-import { getBuildings, getDevices } from "../../campus-optimizer/co-api.js";
+import { getBuildings, getDevices, getRooms, getHirearchy, getAncestorsSync, getDescendantsSync, DEVICE_TYPE, ROOM_TYPE } from "../../campus-optimizer/co-api.js";
 import {
   fetchAllThermostatsForSiteDate,
   fetchThermostatCoreSettingsForSite,
@@ -29,6 +29,91 @@ function hasValidCoreSettingPair(setting) {
     maxHeatSetting !== 0 &&
     minCoolSetting !== 0
   );
+}
+
+function buildCoDeviceIndexes(coDevices) {
+  const byName = new Map();
+  const byPelicanSerial = new Map();
+  for (const d of coDevices) {
+    if (d?.Name) {
+      byName.set(d.Name.toLowerCase(), d);
+    }
+    const serial = d?.PelicanSerialNo;
+    if (serial) {
+      byPelicanSerial.set(normalizeSerial(String(serial)), d);
+    }
+  }
+  return { byName, byPelicanSerial };
+}
+
+/** Match a CO device by Pelican serial (preferred) or thermostat name. */
+function resolveCoDevice(byPelicanSerial, byName, pelicanSerialNo, pelicanName) {
+  if (pelicanSerialNo) {
+    const bySerial = byPelicanSerial.get(normalizeSerial(String(pelicanSerialNo)));
+    if (bySerial) return bySerial;
+  }
+  if (pelicanName) {
+    return byName.get(pelicanName.toLowerCase()) ?? null;
+  }
+  return null;
+}
+
+function coSetpointsFromDevice(coDevice) {
+  const pick = (v) => {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  };
+  if (!coDevice) {
+    return {
+      coOccupiedHeatingSetpoint: null,
+      coUnoccupiedHeatingSetpoint: null,
+      coOccupiedCoolingSetpoint: null,
+      coUnoccupiedCoolingSetpoint: null,
+    };
+  }
+  return {
+    coOccupiedHeatingSetpoint: pick(coDevice.OccupiedHeatingSetpoint),
+    coUnoccupiedHeatingSetpoint: pick(coDevice.UnoccupiedHeatingSetpoint),
+    coOccupiedCoolingSetpoint: pick(coDevice.OccupiedCoolingSetpoint),
+    coUnoccupiedCoolingSetpoint: pick(coDevice.UnoccupiedCoolingSetpoint),
+  };
+}
+
+function coIncludeFlagsFromDevice(coDevice) {
+  const toBool = (v) => Boolean(Number(v));
+  if (!coDevice) {
+    return {
+      includeInMassEditor: null,
+      includeInReports: null,
+    };
+  }
+  return {
+    includeInMassEditor: toBool(coDevice.IncludeInMassEditor),
+    includeInReports: toBool(coDevice.IncludeInReports),
+  };
+}
+
+function coHeatPumpStatusFromDevice(coDevice) {
+  if (!coDevice) {
+    return { heatPumpWithoutBackup: null };
+  }
+
+  const heatSourceId = Number(coDevice.HeatingSourceId);
+  const heatingCapacity = Number(coDevice.HeatingCapacity);
+  const typicalHeatingCapacity = Number(coDevice.TypicalHeatingCapacity);
+
+  // Heat pump sources are 6, 11, or 12
+  const isHeatPump = [6, 11, 12].includes(heatSourceId);
+
+  // No backup if HeatingCapacity is the same as TypicalHeatingCapacity
+  const hasNoBackup =
+    Number.isFinite(heatingCapacity) &&
+    Number.isFinite(typicalHeatingCapacity) &&
+    heatingCapacity === typicalHeatingCapacity;
+
+  return {
+    heatPumpWithoutBackup: isHeatPump && hasNoBackup,
+  };
 }
 
 /**
@@ -76,20 +161,24 @@ async function handleRequest(req, res) {
 
     const days = Math.min(Math.max(Number(daysParam) || DEFAULT_DAYS, 1), 7);
 
-    // Get CO devices for name lookup
+    // Get CO devices for name / Pelican serial lookup and setpoints
     let coDevices = [];
+    let rooms = [];
+    let hierarchy = [];
     try {
-      coDevices = await getDevices(Number(clientId));
+      [coDevices, rooms, hierarchy] = await Promise.all([
+        getDevices(Number(clientId)),
+        getRooms(Number(clientId)),
+        getHirearchy(Number(clientId)),
+      ]);
     } catch (error) {
-      console.warn(`[Pelican Core Settings] Could not fetch CO devices: ${error.message}`);
+      console.warn(`[Pelican Core Settings] Could not fetch CO data: ${error.message}`);
     }
 
-    const coDevicesByName = new Map();
-    for (const d of coDevices) {
-      if (d?.Name) {
-        coDevicesByName.set(d.Name.toLowerCase(), d);
-      }
-    }
+    const roomsById = new Map(rooms.map((r) => [r.Id, r]));
+
+    const { byName: coDevicesByName, byPelicanSerial: coDevicesByPelicanSerial } =
+      buildCoDeviceIndexes(coDevices);
 
     // Get all buildings and extract unique Pelican sites
     const buildings = await getBuildings(Number(clientId));
@@ -141,7 +230,12 @@ async function handleRequest(req, res) {
             const key = `${site.siteSlug}:${summary.serialNo}`;
 
             if (!deviceMap.has(key)) {
-              const coDevice = summary.name ? coDevicesByName.get(summary.name.toLowerCase()) : null;
+              const coDevice = resolveCoDevice(
+                coDevicesByPelicanSerial,
+                coDevicesByName,
+                summary.serialNo,
+                summary.name
+              );
 
               deviceMap.set(key, {
                 pelicanId: summary.serialNo,
@@ -164,7 +258,12 @@ async function handleRequest(req, res) {
             // Update name if we find a better one
             if (!device.name || device.name === device.pelicanId) {
               if (summary.name) {
-                const coDevice = coDevicesByName.get(summary.name.toLowerCase());
+                const coDevice = resolveCoDevice(
+                  coDevicesByPelicanSerial,
+                  coDevicesByName,
+                  summary.serialNo,
+                  summary.name
+                );
                 device.name = coDevice?.Name || summary.name;
                 device.coDeviceId = coDevice?.Id || device.coDeviceId;
               }
@@ -284,20 +383,62 @@ async function handleRequest(req, res) {
     }
 
     // Transform to final format
-    const devices = Array.from(deviceMap.values()).map((d) => ({
-      pelicanId: d.pelicanId,
-      name: d.name,
-      groupName: d.groupName,
-      siteSlug: d.siteSlug,
-      buildingName: d.buildingName,
-      coDeviceId: d.coDeviceId,
-      heatingOccupiedSetpoint: d.maxHeat,
-      heatingUnoccupiedSetpoint: d.minHeat,
-      coolingOccupiedSetpoint: d.minCool,
-      coolingUnoccupiedSetpoint: d.maxCool,
-      maxHeatSetting: d.maxHeatSetting,
-      minCoolSetting: d.minCoolSetting,
-    }));
+    const devices = Array.from(deviceMap.values()).map((d) => {
+      const coDevice = resolveCoDevice(
+        coDevicesByPelicanSerial,
+        coDevicesByName,
+        d.pelicanId,
+        d.name
+      );
+      const coSetpoints = coSetpointsFromDevice(coDevice);
+      const coIncludeFlags = coIncludeFlagsFromDevice(coDevice);
+      const coHeatPumpStatus = coHeatPumpStatusFromDevice(coDevice);
+
+      let deviceRooms = [];
+      if (coDevice && hierarchy.length > 0) {
+        try {
+          const ancestors = getAncestorsSync(hierarchy, coDevice, DEVICE_TYPE, ROOM_TYPE, rooms);
+          const descendants = getDescendantsSync(hierarchy, coDevice, DEVICE_TYPE, ROOM_TYPE, rooms);
+
+          // Combine and deduplicate rooms by Id
+          const combinedRooms = [...ancestors, ...descendants];
+          const uniqueRoomIds = new Set();
+          for (const r of combinedRooms) {
+            if (r && r.Id && !uniqueRoomIds.has(r.Id)) {
+              uniqueRoomIds.add(r.Id);
+              deviceRooms.push({
+                Id: r.Id,
+                Name: r.Name,
+                IsVIPArea: !!r.IsVIPArea,
+              });
+            }
+          }
+        } catch (err) {
+          console.warn(
+            `[Pelican Core Settings] Failed to get rooms for device ${coDevice.Id}: ${err.message}`
+          );
+        }
+      }
+
+      return {
+        pelicanId: d.pelicanId,
+        name: d.name,
+        groupName: d.groupName,
+        siteSlug: d.siteSlug,
+        buildingName: d.buildingName,
+        coDeviceId: coDevice?.Id ?? d.coDeviceId,
+        ...coSetpoints,
+        ...coIncludeFlags,
+        ...coHeatPumpStatus,
+        heatingOccupiedSetpoint: d.maxHeat,
+        heatingUnoccupiedSetpoint: d.minHeat,
+        coolingOccupiedSetpoint: d.minCool,
+        coolingUnoccupiedSetpoint: d.maxCool,
+        maxHeatSetting: d.maxHeatSetting,
+        minCoolSetting: d.minCoolSetting,
+        rooms: deviceRooms,
+      };
+    });
 
     return res.status(200).json({
       devices,

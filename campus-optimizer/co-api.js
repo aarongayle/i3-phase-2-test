@@ -361,9 +361,40 @@ export function getNode(hierarchy, id, type) {
   );
 }
 
-export async function getDescendants(hierarchy, element, elementType, type) {
+export function getDescendantsSync(hierarchy, element, elementType, type, elements) {
   const results = [];
   const node = getNode(hierarchy, element.Id, elementType);
+
+  if (!node) return [];
+
+  function getChildren(hierarchy, node, type) {
+    const result = [];
+    const children = hierarchy.filter(
+      ({ ParentElementTableId, ParentCategoryId }) =>
+        ParentElementTableId === node.ElementTableId &&
+        ParentCategoryId === node.CategoryId
+    );
+    for (const child of children) {
+      if (child.CategoryId === type) {
+        result.push(child);
+      }
+      result.push(...getChildren(hierarchy, child, type));
+    }
+    return result;
+  }
+
+  const children = getChildren(hierarchy, node, type);
+  for (const child of children) {
+    const found = elements.find(({ Id }) => Id === child.ElementTableId);
+    if (found) results.push(found);
+  }
+
+  return results;
+}
+
+export async function getDescendants(hierarchy, element, elementType, type) {
+  const node = getNode(hierarchy, element.Id, elementType);
+  if (!node) return [];
 
   const elements =
     type === BUILDING_TYPE
@@ -376,52 +407,16 @@ export async function getDescendants(hierarchy, element, elementType, type) {
       ? await getRooms(node.ClientId)
       : [];
 
-  function getChildren(hierarchy, node, type) {
-    const result = [];
-    const children = hierarchy.filter(
-      ({ ParentElementTableId, ParentCategoryId }) =>
-        ParentElementTableId === node.ElementTableId &&
-        ParentCategoryId === node.CategoryId
-    );
-    console.log(children);
-    for (const child of children) {
-      if (child.CategoryId === type) {
-        result.push(child);
-      }
-      result.push(...getChildren(hierarchy, child, type));
-    }
-    return result;
-  }
-
-  const children = getChildren(hierarchy, node, type);
-  for (const child of children) {
-    results.push(child);
-    results.push(...getChildren(hierarchy, child, type));
-  }
-
-  return results.map(({ ElementTableId }) =>
-    elements.find(({ Id }) => Id === ElementTableId)
-  );
+  return getDescendantsSync(hierarchy, element, elementType, type, elements);
 }
 
-export async function getAncestors(hierarchy, element, elementType, type) {
+export function getAncestorsSync(hierarchy, element, elementType, type, elements) {
   const results = [];
   const startNode = getNode(hierarchy, element.Id, elementType);
 
   if (!startNode) {
     return results;
   }
-
-  const elements =
-    type === BUILDING_TYPE
-      ? await getBuildings(startNode.ClientId)
-      : type === METER_TYPE
-      ? await getMeters(startNode.ClientId)
-      : type === GROUP_TYPE
-      ? await getGroups(startNode.ClientId)
-      : type === ROOM_TYPE
-      ? await getRooms(startNode.ClientId)
-      : [];
 
   const visited = new Set();
   let current = startNode;
@@ -458,6 +453,27 @@ export async function getAncestors(hierarchy, element, elementType, type) {
       elements.find(({ Id }) => Id === ElementTableId)
     )
     .filter(Boolean);
+}
+
+export async function getAncestors(hierarchy, element, elementType, type) {
+  const startNode = getNode(hierarchy, element.Id, elementType);
+
+  if (!startNode) {
+    return [];
+  }
+
+  const elements =
+    type === BUILDING_TYPE
+      ? await getBuildings(startNode.ClientId)
+      : type === METER_TYPE
+      ? await getMeters(startNode.ClientId)
+      : type === GROUP_TYPE
+      ? await getGroups(startNode.ClientId)
+      : type === ROOM_TYPE
+      ? await getRooms(startNode.ClientId)
+      : [];
+
+  return getAncestorsSync(hierarchy, element, elementType, type, elements);
 }
 
 export async function getHirearchy(client) {
