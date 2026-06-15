@@ -107,6 +107,7 @@ router.post("/:clientId/headless", async (req, res, next) => {
       return res.json({
         meta: result.meta,
         images: buildImageUrlsById(clientId, result.imagePathsById),
+        analytics: result.analytics ?? null,
       });
     }
 
@@ -198,6 +199,7 @@ router.get("/:clientId/headless/stream", async (req, res, next) => {
         stage: "complete",
         status: "ok",
         meta: result.meta,
+        analytics: result.analytics ?? null,
       };
 
       if (splitImages) {

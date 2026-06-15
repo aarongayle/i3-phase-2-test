@@ -5,6 +5,11 @@ import { getBuildings } from "../../campus-optimizer/co-api.js";
 import { buildHtml } from "../../campus-optimizer/generate-html.js";
 import { calculatePelicanAnalytics } from "../../lib/pelican-analytics.js";
 import { buildCompiledReport } from "../../lib/report-builder.js";
+import {
+  buildReportAnalytics,
+  enrichStreamMeta,
+  resolveClientName,
+} from "../../lib/report-analytics.js";
 
 const DEFAULT_OUT_DIR = path.resolve("./campus-optimizer/reports/headless");
 const DEFAULT_PELICAN_DAYS = 100;
@@ -181,6 +186,10 @@ export async function generateHeadlessReportImage({
   progress("pelican-done", "Pelican analytics loaded");
 
   const fullData = { ...compiled, pelican };
+  const clientName = await resolveClientName(clientId);
+  const streamMeta = enrichStreamMeta(compiled.report?.meta || {}, compiled.report, {
+    clientName,
+  });
 
   const html = buildHtml(fullData);
   ensureDir(outDir);
@@ -249,9 +258,14 @@ export async function generateHeadlessReportImage({
         `[headless-report] Saved ${Object.keys(imagePathsById).length} split report images`
       );
 
+      const analytics = buildReportAnalytics(fullData, {
+        capturedImageIds: Object.keys(imagePathsById),
+      });
+
       return {
         imagePathsById,
-        meta: compiled.report?.meta || {},
+        meta: streamMeta,
+        analytics,
         pelican,
       };
     }
@@ -283,9 +297,12 @@ export async function generateHeadlessReportImage({
       `[headless-report] Screenshot saved: ${imagePath} (${screenshotBuffer.length} bytes)`
     );
 
+    const analytics = buildReportAnalytics(fullData);
+
     return {
       imagePath,
-      meta: compiled.report?.meta || {},
+      meta: streamMeta,
+      analytics,
       pelican,
     };
   } finally {
