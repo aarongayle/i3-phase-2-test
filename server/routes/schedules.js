@@ -3,6 +3,7 @@
 
 import { Router } from "express";
 import * as cache from "../cache.js";
+import { saveShortSchedulesForDate } from "../../lib/schedule-store.js";
 
 const router = Router();
 
@@ -70,6 +71,9 @@ router.get("/:clientId/:date", async (req, res) => {
 
     // Cache for 1 hour (historical data doesn't change)
     cache.set(cacheKey, schedules, { ex: 3600 });
+    saveShortSchedulesForDate(clientId, date, schedules).catch((err) => {
+      console.warn(`[Schedules API] Short schedule persist failed:`, err.message);
+    });
 
     return res.status(200).json({ schedules });
   } catch (error) {

@@ -108,6 +108,7 @@ router.post("/:clientId/headless", async (req, res, next) => {
         meta: result.meta,
         images: buildImageUrlsById(clientId, result.imagePathsById),
         analytics: result.analytics ?? null,
+        schedules: result.schedules ?? null,
       });
     }
 
@@ -200,6 +201,7 @@ router.get("/:clientId/headless/stream", async (req, res, next) => {
         status: "ok",
         meta: result.meta,
         analytics: result.analytics ?? null,
+        schedules: result.schedules ?? null,
       };
 
       if (splitImages) {
@@ -241,6 +243,7 @@ router.get("/:clientId/headless/stream", async (req, res, next) => {
         stage: "error",
         status: "error",
         message: error.message || "Headless report failed",
+        schedules: null,
       });
 
       res.write(`event: progress\ndata: ${errorEvent}\n\n`);

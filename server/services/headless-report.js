@@ -10,9 +10,15 @@ import {
   enrichStreamMeta,
   resolveClientName,
 } from "../../lib/report-analytics.js";
+import { buildReportSchedules } from "../../lib/report-schedules.js";
+import {
+  DEFAULT_REPORT_WINDOW_DAYS,
+  daysBetween,
+  resolveEnergyDateRange,
+} from "../../lib/report-window.js";
 
 const DEFAULT_OUT_DIR = path.resolve("./campus-optimizer/reports/headless");
-const DEFAULT_PELICAN_DAYS = 100;
+const DEFAULT_PELICAN_DAYS = DEFAULT_REPORT_WINDOW_DAYS;
 const API_BASE =
   process.env.HEADLESS_API_BASE ||
   `http://localhost:${process.env.PORT || 3001}/api`;
@@ -163,6 +169,7 @@ export async function generateHeadlessReportImage({
   useCache = true,
   splitImages = false,
   pelicanDays = DEFAULT_PELICAN_DAYS,
+  reportWindowDays = DEFAULT_REPORT_WINDOW_DAYS,
   onProgress,
 }) {
   if (!clientId) {
@@ -174,15 +181,39 @@ export async function generateHeadlessReportImage({
 
   progress("start", "Starting headless report generation", { clientId });
 
+  const compiledCachePath = path.resolve(
+    `./campus-optimizer/data/compiled-${String(clientId).trim()}.json`
+  );
+  const hasCompiledCache = useCache && fs.existsSync(compiledCachePath);
+
+  // Never overwrite the canonical precomputed compiled file from headless.
+  // Only use a bounded rebuild window when there is no compiled cache to load.
   const compiled = await buildCompiledReport(clientId, {
     useCache,
-    saveJson: true,
+    saveJson: false,
+    reportWindowDays: hasCompiledCache ? undefined : reportWindowDays,
     onProgress: (payload) =>
       progress(payload?.stage || "compile", payload?.message, payload),
   });
 
+  const energyRange = resolveEnergyDateRange(
+    compiled.report?.energy?.expected,
+    compiled.report?.energy?.actual,
+    compiled.report?.meta
+  );
+  const pelicanDayCount = energyRange
+    ? Math.min(
+        pelicanDays,
+        daysBetween(energyRange.start, energyRange.end)
+      )
+    : pelicanDays;
+
   // Optional Pelican analytics (occupancy/runtime) to enrich the report
-  const pelican = await loadPelicanAnalytics(clientId, pelicanDays, progress);
+  const pelican = await loadPelicanAnalytics(
+    clientId,
+    pelicanDayCount,
+    progress
+  );
   progress("pelican-done", "Pelican analytics loaded");
 
   const fullData = { ...compiled, pelican };
@@ -190,6 +221,27 @@ export async function generateHeadlessReportImage({
   const streamMeta = enrichStreamMeta(compiled.report?.meta || {}, compiled.report, {
     clientName,
   });
+
+  progress("schedules-start", "Loading compact schedules from storage");
+  let schedules = null;
+  try {
+    schedules = await buildReportSchedules(clientId, {
+      report: compiled.report,
+      dateRange: streamMeta.dateRange,
+      windowDays: reportWindowDays,
+    });
+    if (schedules) {
+      const bytes = Buffer.byteLength(JSON.stringify(schedules), "utf8");
+      console.log(`[headless-report] Schedules payload: ${bytes} bytes`);
+      progress("schedules-done", "Compact schedules loaded", { bytes });
+    } else {
+      progress("schedules-empty", "No compact schedules in storage");
+    }
+  } catch (schedErr) {
+    console.warn("[headless-report] Schedules load failed:", schedErr.message);
+    progress("schedules-error", schedErr.message);
+    schedules = null;
+  }
 
   const html = buildHtml(fullData);
   ensureDir(outDir);
@@ -266,6 +318,7 @@ export async function generateHeadlessReportImage({
         imagePathsById,
         meta: streamMeta,
         analytics,
+        schedules,
         pelican,
       };
     }
@@ -303,6 +356,7 @@ export async function generateHeadlessReportImage({
       imagePath,
       meta: streamMeta,
       analytics,
+      schedules,
       pelican,
     };
   } finally {
