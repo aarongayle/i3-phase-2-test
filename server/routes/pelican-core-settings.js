@@ -121,7 +121,7 @@ function coHeatPumpStatusFromDevice(coDevice) {
  */
 async function getSummariesForSiteDate(clientId, siteSlug, username, password, date) {
   // Try Supabase cache first
-  if (isSupabaseEnabled) {
+  if (isSupabaseEnabled()) {
     try {
       const cached = await getCachedSummariesFromSupabase(clientId, siteSlug, date);
       if (cached.length > 0) {
@@ -139,7 +139,7 @@ async function getSummariesForSiteDate(clientId, siteSlug, username, password, d
   const summaries = thermostats.map((t) => summarizeThermostatDay(t, date));
 
   // Save to cache for next time
-  if (isSupabaseEnabled && summaries.length > 0) {
+  if (isSupabaseEnabled() && summaries.length > 0) {
     try {
       await saveSummariesToSupabase(summaries, clientId, siteSlug);
     } catch (error) {
@@ -308,7 +308,7 @@ async function handleRequest(req, res) {
           const thermostatSettingsBySerial = new Map();
           let missingSerials = siteSerials;
 
-          if (isSupabaseEnabled) {
+          if (isSupabaseEnabled()) {
             try {
               const cachedSettings = await getCachedThermostatSettingsFromSupabase(
                 clientId,
@@ -349,7 +349,7 @@ async function handleRequest(req, res) {
               );
             }
 
-            if (isSupabaseEnabled && fetchedSettings.length > 0) {
+            if (isSupabaseEnabled() && fetchedSettings.length > 0) {
               try {
                 await saveThermostatCoreSettingsToSupabase(
                   fetchedSettings,

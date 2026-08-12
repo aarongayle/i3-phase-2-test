@@ -15,6 +15,7 @@
     "co:compile": "node campus-optimizer/compile-data.js",
     "co:report": "node campus-optimizer/generate-html.js",
     "co:build": "pnpm co:compile && pnpm co:report",
+    "co:headless": "node scripts/generate-headless-report.js",
     "pelican:devices": "node pelican/pelican-api.js",
     "precompute": "node scripts/precompute-reports.js"
   },

@@ -16,12 +16,10 @@ import {
   daysBetween,
   resolveEnergyDateRange,
 } from "../../lib/report-window.js";
+import { loadPelicanHistoryForSiteDate } from "../routes/pelican-history.js";
 
 const DEFAULT_OUT_DIR = path.resolve("./campus-optimizer/reports/headless");
 const DEFAULT_PELICAN_DAYS = DEFAULT_REPORT_WINDOW_DAYS;
-const API_BASE =
-  process.env.HEADLESS_API_BASE ||
-  `http://localhost:${process.env.PORT || 3001}/api`;
 const SPLIT_IMAGE_TARGETS = [
   { id: "topRuntime", selector: "#barTopRuntime", label: "Top runtime" },
   {
@@ -222,7 +220,7 @@ export async function generateHeadlessReportImage({
     clientName,
   });
 
-  progress("schedules-start", "Loading compact schedules from storage");
+  progress("schedules-start", "Loading schedules (cache/DB, CO on miss)");
   let schedules = null;
   try {
     schedules = await buildReportSchedules(clientId, {
@@ -395,7 +393,7 @@ async function loadPelicanAnalytics(
       return null;
     }
 
-    progress("pelican-start", "Loading Pelican analytics", {
+    progress("pelican-start", "Loading Pelican analytics (cache/DB, live on miss)", {
       sites: sites.length,
       days,
     });
@@ -417,30 +415,30 @@ async function loadPelicanAnalytics(
           dateIndex: dateIdx + 1,
           dateCount: dates.length,
         });
-        const url = `${API_BASE}/pelican/history/${clientId}?siteSlug=${encodeURIComponent(
-          siteSlug
-        )}&date=${date}`;
-        const res = await fetch(url);
-        if (!res.ok) {
-          const body = await res.text();
+        try {
+          const json = await loadPelicanHistoryForSiteDate(
+            clientId,
+            siteSlug,
+            date,
+            { log: false }
+          );
+          const rows = Array.isArray(json?.thermostats) ? json.thermostats : [];
+          for (const row of rows) {
+            thermostats.push({
+              ...row,
+              date,
+              siteSlug,
+              groupName: row?.groupName || row?.group || row?.group_name,
+            });
+          }
+        } catch (fetchErr) {
           console.warn(
-            `[headless-report] Pelican fetch failed ${siteSlug}/${date}: ${res.status} ${body}`
+            `[headless-report] Pelican fetch failed ${siteSlug}/${date}: ${fetchErr.message}`
           );
           progress("pelican-fetch-error", "Pelican fetch failed", {
             siteSlug,
             date,
-            status: res.status,
-          });
-          continue;
-        }
-        const json = await res.json();
-        const rows = Array.isArray(json?.thermostats) ? json.thermostats : [];
-        for (const row of rows) {
-          thermostats.push({
-            ...row,
-            date,
-            siteSlug,
-            groupName: row?.groupName || row?.group || row?.group_name,
+            message: fetchErr.message,
           });
         }
       }

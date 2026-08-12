@@ -5,12 +5,12 @@
 import { Router } from "express";
 import { getBuildings } from "../../campus-optimizer/co-api.js";
 import { DEFAULT_HISTORY_FIELDS } from "../../pelican/history.js";
-import supabase from "../lib/supabase-client.js";
+import supabase, { getSupabase } from "../lib/supabase-client.js";
 
 const router = Router();
 const SUPABASE_DAILY_TABLE = "pelican_daily_summaries";
 const SUPABASE_THERMOSTAT_TABLE = "pelican_thermostats";
-const isSupabaseEnabled = Boolean(supabase);
+const isSupabaseEnabled = () => Boolean(getSupabase());
 const THERMOSTAT_VALUE_TEMPLATE = Object.freeze({
   serialNo: "",
   maxHeatSetting: "",
@@ -173,7 +173,7 @@ function thermostatRowToSettings(row) {
 }
 
 async function getCachedSummariesFromSupabase(clientId, siteSlug, date) {
-  if (!isSupabaseEnabled) return [];
+  if (!isSupabaseEnabled()) return [];
 
   const { data, error } = await supabase
     .from(SUPABASE_DAILY_TABLE)
@@ -190,7 +190,7 @@ async function getCachedSummariesFromSupabase(clientId, siteSlug, date) {
 }
 
 async function upsertThermostats(rows) {
-  if (!isSupabaseEnabled || !rows.length) return;
+  if (!isSupabaseEnabled() || !rows.length) return;
   const { error } = await supabase
     .from(SUPABASE_THERMOSTAT_TABLE)
     .upsert(rows, { onConflict: "serial_no" });
@@ -200,7 +200,7 @@ async function upsertThermostats(rows) {
 }
 
 async function upsertDailySummaries(rows) {
-  if (!isSupabaseEnabled || !rows.length) return;
+  if (!isSupabaseEnabled() || !rows.length) return;
   const { error } = await supabase
     .from(SUPABASE_DAILY_TABLE)
     .upsert(rows, { onConflict: "summary_date,serial_no" });
@@ -210,7 +210,7 @@ async function upsertDailySummaries(rows) {
 }
 
 async function saveSummariesToSupabase(summaries, clientId, siteSlug) {
-  if (!isSupabaseEnabled || !Array.isArray(summaries) || !summaries.length) {
+  if (!isSupabaseEnabled() || !Array.isArray(summaries) || !summaries.length) {
     return;
   }
 
@@ -305,7 +305,7 @@ async function getCachedThermostatSettingsFromSupabase(
   siteSlug,
   serialNumbers
 ) {
-  if (!isSupabaseEnabled) return [];
+  if (!isSupabaseEnabled()) return [];
 
   const normalizedSerials = Array.from(
     new Set(
@@ -339,7 +339,7 @@ async function saveThermostatCoreSettingsToSupabase(
   siteSlug
 ) {
   if (
-    !isSupabaseEnabled ||
+    !isSupabaseEnabled() ||
     !Array.isArray(thermostatSettings) ||
     !thermostatSettings.length
   ) {
@@ -959,6 +959,126 @@ function summarizeThermostatDay(thermostat, date) {
   return summary;
 }
 
+/**
+ * Load summarized Pelican thermostat history for one site/date.
+ * Same path as GET /api/pelican/history/:clientId — Supabase cache first,
+ * then live Pelican fetch + persist. Usable from headless without HTTP.
+ */
+export async function loadPelicanHistoryForSiteDate(
+  clientId,
+  siteSlug,
+  date,
+  { log = true } = {}
+) {
+  if (!clientId) {
+    throw new Error("clientId is required");
+  }
+  if (!siteSlug || !date) {
+    throw new Error("siteSlug and date (YYYY-MM-DD) are required");
+  }
+
+  const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+  if (!dateRegex.test(String(date))) {
+    throw new Error("date must be in YYYY-MM-DD format");
+  }
+
+  const logFn = log ? console.log.bind(console) : () => {};
+  const errFn = log ? console.error.bind(console) : () => {};
+
+  // Try cached daily summaries first (Supabase)
+  if (isSupabaseEnabled()) {
+    try {
+      const cachedSummaries = await getCachedSummariesFromSupabase(
+        clientId,
+        siteSlug,
+        date
+      );
+
+      if (cachedSummaries.length) {
+        const cachedTotalEntries = cachedSummaries.reduce(
+          (sum, t) => sum + (t.entryCount ?? 0),
+          0
+        );
+
+        // Only trust the cache when at least one thermostat has actual history
+        // entries. If every cached row has entryCount=0, the cache was likely
+        // written when this date was in the future (no data existed yet at write
+        // time). Skip the stale cache and re-fetch from the Pelican API so that
+        // now-available data is returned and the cache is healed.
+        if (cachedTotalEntries > 0) {
+          logFn(
+            `[Pelican History] ✅ Cache hit in Supabase for ${cachedSummaries.length} thermostats (${cachedTotalEntries} total entries)`
+          );
+
+          return {
+            thermostats: cachedSummaries,
+            query: { clientId, siteSlug, date },
+            thermostatCount: cachedSummaries.length,
+            totalEntries: cachedTotalEntries,
+            summarized: true,
+            cache: { source: "supabase", hit: true },
+          };
+        }
+
+        logFn(
+          `[Pelican History] ⚠️ Cache has ${cachedSummaries.length} rows for ${date} but all have 0 entries — treating as stale, re-fetching from Pelican`
+        );
+      }
+    } catch (cacheError) {
+      errFn(`[Pelican History] Supabase cache lookup failed:`, cacheError);
+    }
+  }
+
+  const { username, password } = await getCredentialsForSite(
+    Number(clientId),
+    siteSlug
+  );
+
+  const thermostats = await fetchAllThermostatsForSiteDate(
+    siteSlug,
+    username,
+    password,
+    date
+  );
+
+  const totalEntries = thermostats.reduce((sum, t) => sum + t.entryCount, 0);
+  const summarizedThermostats = thermostats.map((t) =>
+    summarizeThermostatDay(t, date)
+  );
+
+  const responseData = {
+    thermostats: summarizedThermostats,
+    query: { clientId, siteSlug, date },
+    thermostatCount: summarizedThermostats.length,
+    totalEntries,
+    summarized: true,
+  };
+
+  // Persist summaries to Supabase for future cache hits.
+  // Skip caching when every thermostat has 0 entries — this typically means
+  // the date had no data yet (e.g. a future or same-day request). Caching
+  // such results would poison the cache and hide real data on future fetches.
+  const hasAnyEntries = summarizedThermostats.some(
+    (t) => (t.entryCount ?? 0) > 0
+  );
+  if (isSupabaseEnabled() && hasAnyEntries) {
+    try {
+      await saveSummariesToSupabase(summarizedThermostats, clientId, siteSlug);
+    } catch (supabaseError) {
+      errFn(
+        "[Pelican History] Failed to upsert Supabase summaries:",
+        supabaseError
+      );
+    }
+  } else if (isSupabaseEnabled() && !hasAnyEntries) {
+    logFn(
+      `[Pelican History] ⚠️ Skipping cache write for ${date} — no thermostat entries returned`
+    );
+  }
+
+  return responseData;
+}
+
 router.get("/:clientId", async (req, res) => {
   const requestStart = Date.now();
 
@@ -976,7 +1096,6 @@ router.get("/:clientId", async (req, res) => {
       });
     }
 
-    // Validate date format
     const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
     if (!dateRegex.test(date)) {
       return res.status(400).json({
@@ -987,115 +1106,21 @@ router.get("/:clientId", async (req, res) => {
     console.log(`\n[Pelican History API] ========== NEW REQUEST ==========`);
     console.log(`[Pelican History API] Query:`, { clientId, siteSlug, date });
 
-    // Try cached daily summaries first (Supabase)
-    if (isSupabaseEnabled) {
-      try {
-        const cachedSummaries = await getCachedSummariesFromSupabase(
-          clientId,
-          siteSlug,
-          date
-        );
-
-        if (cachedSummaries.length) {
-          const cachedTotalEntries = cachedSummaries.reduce(
-            (sum, t) => sum + (t.entryCount ?? 0),
-            0
-          );
-
-          // Only trust the cache when at least one thermostat has actual history
-          // entries. If every cached row has entryCount=0, the cache was likely
-          // written when this date was in the future (no data existed yet at write
-          // time). Skip the stale cache and re-fetch from the Pelican API so that
-          // now-available data is returned and the cache is healed.
-          if (cachedTotalEntries > 0) {
-            console.log(
-              `[Pelican History API] ✅ Cache hit in Supabase for ${cachedSummaries.length} thermostats (${cachedTotalEntries} total entries)`
-            );
-
-            return res.status(200).json({
-              thermostats: cachedSummaries,
-              query: { clientId, siteSlug, date },
-              thermostatCount: cachedSummaries.length,
-              totalEntries: cachedTotalEntries,
-              summarized: true,
-              cache: { source: "supabase", hit: true },
-            });
-          }
-
-          console.log(
-            `[Pelican History API] ⚠️ Cache has ${cachedSummaries.length} rows for ${date} but all have 0 entries — treating as stale, re-fetching from Pelican`
-          );
-        }
-      } catch (cacheError) {
-        console.error(
-          `[Pelican History API] Supabase cache lookup failed:`,
-          cacheError
-        );
-      }
-    }
-
-    // Get credentials for this site
-    const { username, password } = await getCredentialsForSite(
-      Number(clientId),
-      siteSlug
-    );
-
-    // Fetch ALL thermostats for this site/date
-    const thermostats = await fetchAllThermostatsForSiteDate(
+    const responseData = await loadPelicanHistoryForSiteDate(
+      clientId,
       siteSlug,
-      username,
-      password,
       date
     );
-
-    const totalEntries = thermostats.reduce((sum, t) => sum + t.entryCount, 0);
-    const summarizedThermostats = thermostats.map((t) =>
-      summarizeThermostatDay(t, date)
-    );
-
-    const responseData = {
-      thermostats: summarizedThermostats,
-      query: { clientId, siteSlug, date },
-      thermostatCount: summarizedThermostats.length,
-      totalEntries,
-      summarized: true,
-    };
 
     const totalTime = Date.now() - requestStart;
     console.log(`[Pelican History API] ========== REQUEST COMPLETE ==========`);
     console.log(`[Pelican History API] ⏱️ TOTAL REQUEST TIME: ${totalTime}ms`);
     console.log(
-      `[Pelican History API] ⏱️ Returned ${thermostats.length} thermostats with ${totalEntries} entries`
+      `[Pelican History API] ⏱️ Returned ${responseData.thermostatCount} thermostats with ${responseData.totalEntries} entries`
     );
     console.log(
       `[Pelican History API] ===========================================\n`
     );
-
-    // Persist summaries to Supabase for future cache hits.
-    // Skip caching when every thermostat has 0 entries — this typically means
-    // the date had no data yet (e.g. a future or same-day request). Caching
-    // such results would poison the cache and hide real data on future fetches.
-    const hasAnyEntries = summarizedThermostats.some(
-      (t) => (t.entryCount ?? 0) > 0
-    );
-    if (isSupabaseEnabled && hasAnyEntries) {
-      try {
-        await saveSummariesToSupabase(
-          summarizedThermostats,
-          clientId,
-          siteSlug
-        );
-      } catch (supabaseError) {
-        console.error(
-          "[Pelican History API] Failed to upsert Supabase summaries:",
-          supabaseError
-        );
-      }
-    } else if (isSupabaseEnabled && !hasAnyEntries) {
-      console.log(
-        `[Pelican History API] ⚠️ Skipping cache write for ${date} — no thermostat entries returned`
-      );
-    }
 
     return res.status(200).json(responseData);
   } catch (error) {

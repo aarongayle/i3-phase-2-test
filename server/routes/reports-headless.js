@@ -1,6 +1,11 @@
 import express from "express";
 import fs from "node:fs";
 import path from "node:path";
+import {
+  buildHeadlessReportErrorResponse,
+  buildHeadlessReportResponse,
+  buildImageUrlsById,
+} from "../../lib/headless-report-response.js";
 import { generateHeadlessReportImage } from "../services/headless-report.js";
 
 const router = express.Router();
@@ -35,27 +40,6 @@ router.get("/:clientId/headless/image/:filename", (req, res) => {
 function normalizeFormat(format) {
   const fmt = String(format || "png").toLowerCase();
   return fmt === "jpeg" || fmt === "jpg" ? "jpeg" : "png";
-}
-
-function buildImageUrl(clientId, imagePath) {
-  let cacheBust = Date.now();
-  try {
-    cacheBust = Math.trunc(fs.statSync(imagePath).mtimeMs);
-  } catch (_err) {
-    // Fall back to current time if the image file isn't stat-able yet.
-  }
-  return `/api/reports/${clientId}/headless/image/${path.basename(
-    imagePath
-  )}?v=${cacheBust}`;
-}
-
-function buildImageUrlsById(clientId, imagePathsById) {
-  return Object.fromEntries(
-    Object.entries(imagePathsById || {}).map(([imageId, imagePath]) => [
-      imageId,
-      buildImageUrl(clientId, imagePath),
-    ])
-  );
 }
 
 function parseBoolean(value, fallback) {
@@ -100,7 +84,10 @@ router.post("/:clientId/headless", async (req, res, next) => {
     });
 
     if (splitImages) {
-      if (!result?.imagePathsById || Object.keys(result.imagePathsById).length === 0) {
+      if (
+        !result?.imagePathsById ||
+        Object.keys(result.imagePathsById).length === 0
+      ) {
         throw new Error("Report images were not generated");
       }
 
@@ -195,22 +182,17 @@ router.get("/:clientId/headless/stream", async (req, res, next) => {
     });
 
     if (!closed) {
-      const finalPayload = {
-        ts: new Date().toISOString(),
-        stage: "complete",
-        status: "ok",
-        meta: result.meta,
-        analytics: result.analytics ?? null,
-        schedules: result.schedules ?? null,
-      };
+      const finalPayload = buildHeadlessReportResponse({
+        clientId,
+        result,
+        splitImages,
+      });
 
       if (splitImages) {
-        finalPayload.images = buildImageUrlsById(clientId, result.imagePathsById);
         console.log(
           `[reports-headless] Sending complete event with ${Object.keys(finalPayload.images).length} images`
         );
       } else {
-        finalPayload.imageUrl = buildImageUrl(clientId, result.imagePath);
         console.log(
           `[reports-headless] Sending complete event with imageUrl: ${finalPayload.imageUrl}`
         );
@@ -238,13 +220,9 @@ router.get("/:clientId/headless/stream", async (req, res, next) => {
   } catch (error) {
     console.error(`[reports-headless] Error in stream handler:`, error);
     if (!closed) {
-      const errorEvent = JSON.stringify({
-        ts: new Date().toISOString(),
-        stage: "error",
-        status: "error",
-        message: error.message || "Headless report failed",
-        schedules: null,
-      });
+      const errorEvent = JSON.stringify(
+        buildHeadlessReportErrorResponse(error)
+      );
 
       res.write(`event: progress\ndata: ${errorEvent}\n\n`);
       res.write(`: flush ${Date.now()}\n\n`);

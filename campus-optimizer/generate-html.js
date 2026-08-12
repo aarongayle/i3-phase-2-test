@@ -432,6 +432,9 @@ export function buildHtml(data) {
         </div>
       </div>
     </section>
+    `
+        : ""
+    }
     ${
       pelicanAnalytics
         ? `
@@ -506,6 +509,9 @@ export function buildHtml(data) {
     `
         : ""
     }
+    ${
+      energyLabels.length
+        ? `
     <section class="grid grid-cols-1 md:grid-cols-2 gap-6">
       <div class="card min-h-[360px]">
         <h2 class="text-lg font-semibold mb-2">Interval Comparison — Latest Day</h2>
