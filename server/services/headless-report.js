@@ -10,6 +10,7 @@ import {
   enrichStreamMeta,
   resolveClientName,
 } from "../../lib/report-analytics.js";
+import { loadMeterCatalog } from "../../lib/meter-catalog.js";
 import { buildReportSchedules } from "../../lib/report-schedules.js";
 import {
   DEFAULT_REPORT_WINDOW_DAYS,
@@ -194,6 +195,15 @@ export async function generateHeadlessReportImage({
       progress(payload?.stage || "compile", payload?.message, payload),
   });
 
+  progress("meter-catalog-start", "Loading configured meters");
+  const [clientName, meterCatalog] = await Promise.all([
+    resolveClientName(clientId),
+    loadMeterCatalog(clientId),
+  ]);
+  progress("meter-catalog-done", "Configured meters loaded", {
+    meters: meterCatalog.length,
+  });
+
   const energyRange = resolveEnergyDateRange(
     compiled.report?.energy?.expected,
     compiled.report?.energy?.actual,
@@ -215,7 +225,6 @@ export async function generateHeadlessReportImage({
   progress("pelican-done", "Pelican analytics loaded");
 
   const fullData = { ...compiled, pelican };
-  const clientName = await resolveClientName(clientId);
   const streamMeta = enrichStreamMeta(compiled.report?.meta || {}, compiled.report, {
     clientName,
   });
@@ -310,6 +319,7 @@ export async function generateHeadlessReportImage({
 
       const analytics = buildReportAnalytics(fullData, {
         capturedImageIds: Object.keys(imagePathsById),
+        meterCatalog,
       });
 
       return {
@@ -348,7 +358,7 @@ export async function generateHeadlessReportImage({
       `[headless-report] Screenshot saved: ${imagePath} (${screenshotBuffer.length} bytes)`
     );
 
-    const analytics = buildReportAnalytics(fullData);
+    const analytics = buildReportAnalytics(fullData, { meterCatalog });
 
     return {
       imagePath,

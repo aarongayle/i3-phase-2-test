@@ -17,7 +17,10 @@
     "co:build": "pnpm co:compile && pnpm co:report",
     "co:headless": "node scripts/generate-headless-report.js",
     "pelican:devices": "node pelican/pelican-api.js",
-    "precompute": "node scripts/precompute-reports.js"
+    "precompute": "node scripts/precompute-reports.js",
+    "test": "pnpm test:meter-catalog && pnpm test:report-analytics",
+    "test:meter-catalog": "node scripts/test-meter-catalog.js",
+    "test:report-analytics": "node scripts/test-report-analytics.js"
   },
   "keywords": [
     "campus-optimizer",
