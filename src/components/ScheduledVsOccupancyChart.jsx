@@ -39,13 +39,13 @@ function aggregateDailyData(dailyAnalytics) {
 
 /**
  * Aggregate CO devices by date
- * CO devices have runtimeWeekly with {date, minutes} entries
+ * CO devices have runtimeDaily with {date, minutes} entries
  */
 function aggregateCOScheduledTime(devices) {
   const byDate = new Map();
 
   for (const device of devices || []) {
-    for (const entry of device.runtimeWeekly || []) {
+    for (const entry of device.runtimeDaily || []) {
       const date = entry.date;
       if (!date) continue;
 

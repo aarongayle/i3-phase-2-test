@@ -17,7 +17,14 @@ import {
   daysBetween,
   resolveEnergyDateRange,
 } from "../../lib/report-window.js";
-import { loadPelicanHistoryForSiteDate } from "../routes/pelican-history.js";
+import {
+  getCachedSummariesRange,
+  loadPelicanHistoryForSiteDate,
+} from "../routes/pelican-history.js";
+import { buildPelicanRollups } from "../../lib/pelican-rollups.js";
+
+// History for rollups comes from the Supabase cache only, so it doesn't slow reports.
+const PELICAN_ROLLUP_DAYS = Number(process.env.PELICAN_ROLLUP_DAYS || 365);
 
 const DEFAULT_OUT_DIR = path.resolve("./campus-optimizer/reports/headless");
 const DEFAULT_PELICAN_DAYS = DEFAULT_REPORT_WINDOW_DAYS;
@@ -275,7 +282,32 @@ export async function generateHeadlessReportImage({
     launchOptions.executablePath = executablePath;
   }
 
-  const browser = await puppeteer.launch(launchOptions);
+  // Charts are one view of the data; a render failure must not drop the
+  // analytics, schedules and Pelican rollups the follow-up agent relies on.
+  const renderFailed = (err) => {
+    console.warn(
+      `[headless-report] Chart render failed; returning analytics without images: ${err.message}`
+    );
+    progress("render-error", "Chart images failed; analytics still included", {
+      message: err.message,
+    });
+    return {
+      imagePathsById: {},
+      renderError: err.message,
+      meta: streamMeta,
+      analytics: buildReportAnalytics(fullData, { capturedImageIds: [], meterCatalog }),
+      schedules,
+      pelican,
+    };
+  };
+
+  let browser;
+  try {
+    browser = await puppeteer.launch(launchOptions);
+  } catch (launchErr) {
+    if (splitImages) return renderFailed(launchErr);
+    throw launchErr;
+  }
   try {
     const page = await browser.newPage();
     await page.setViewport({
@@ -367,6 +399,9 @@ export async function generateHeadlessReportImage({
       schedules,
       pelican,
     };
+  } catch (renderErr) {
+    if (splitImages) return renderFailed(renderErr);
+    throw renderErr;
   } finally {
     try {
       await browser.close();
@@ -459,13 +494,43 @@ async function loadPelicanAnalytics(
       end: dates[dates.length - 1],
     });
     progress("pelican-analytics", "Pelican analytics calculated");
-    return { analytics, sites, days };
+
+    const rollups = await loadPelicanRollups(clientId, sites, thermostats, dates, progress);
+    return { analytics, rollups, sites, days };
   } catch (err) {
     console.warn("[headless-report] Pelican analytics failed:", err.message);
     onProgress?.({
       stage: "pelican-error",
       message: err.message,
     });
+    return null;
+  }
+}
+
+/** Window rows plus cached history, one row per thermostat-day (prefer rows with raw metrics). */
+async function loadPelicanRollups(clientId, sites, windowRows, windowDates, progress) {
+  try {
+    const end = windowDates[windowDates.length - 1];
+    const start = buildDateRange(Math.max(PELICAN_ROLLUP_DAYS, windowDates.length))[0];
+    const byKey = new Map();
+    const add = (row) => {
+      const key = `${row.date}|${row.serialNo}`;
+      const prev = byKey.get(key);
+      if (!prev || (!prev.metrics && row.metrics)) byKey.set(key, row);
+    };
+    for (const siteSlug of sites) {
+      const cached = await getCachedSummariesRange(clientId, siteSlug, start, end);
+      for (const row of cached) add({ ...row, siteSlug });
+    }
+    for (const row of windowRows) add(row);
+    const rollups = buildPelicanRollups(Array.from(byKey.values()), { start, end });
+    progress("pelican-rollups", "Pelican rollups built", {
+      days: rollups?.window?.days ?? 0,
+      units: rollups?.units?.length ?? 0,
+    });
+    return rollups;
+  } catch (err) {
+    console.warn("[headless-report] Pelican rollups failed:", err.message);
     return null;
   }
 }

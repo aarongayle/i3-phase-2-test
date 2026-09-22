@@ -5,6 +5,7 @@
 import { Router } from "express";
 import { getBuildings } from "../../campus-optimizer/co-api.js";
 import { DEFAULT_HISTORY_FIELDS } from "../../pelican/history.js";
+import { computeDayMetrics } from "../../lib/pelican-day-metrics.js";
 import supabase, { getSupabase } from "../lib/supabase-client.js";
 
 const router = Router();
@@ -122,7 +123,14 @@ function summaryToDailyRow(summary, clientId, siteSlug) {
     time_to_first_satisfy_seconds: summary.timeToFirstSatisfy ?? null,
     cycle_probability: summary.cycleProbability ?? null,
     entry_count: summary.entryCount ?? 0,
+    // Needs the `metrics jsonb` column (db/migrations/2026-09-21-pelican-daily-metrics.sql).
+    ...(persistDayMetrics() ? { metrics: summary.metrics ?? null } : {}),
   };
+}
+
+/** Raw-reading metrics are only written once the Supabase column exists. */
+function persistDayMetrics() {
+  return process.env.PELICAN_SUMMARY_METRICS === "1";
 }
 
 function summaryToThermostatRow(summary, clientId, siteSlug) {
@@ -153,6 +161,7 @@ function rowToSummary(row) {
     timeToFirstSatisfy: row.time_to_first_satisfy_seconds,
     cycleProbability: row.cycle_probability,
     entryCount: row.entry_count ?? 0,
+    metrics: row.metrics ?? null,
   };
 }
 
@@ -187,6 +196,33 @@ async function getCachedSummariesFromSupabase(clientId, siteSlug, date) {
   }
 
   return Array.isArray(data) ? data.map(rowToSummary) : [];
+}
+
+/**
+ * Cached daily summaries for a site over a date range (cache only, never live).
+ * Supabase caps a select at 1,000 rows, so this pages through the range.
+ */
+export async function getCachedSummariesRange(clientId, siteSlug, startDate, endDate) {
+  if (!isSupabaseEnabled()) return [];
+  const pageSize = 1000;
+  const out = [];
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await supabase
+      .from(SUPABASE_DAILY_TABLE)
+      .select("*")
+      .eq("pelican_subdomain", siteSlug)
+      .eq("client_id", Number(clientId))
+      .gte("summary_date", startDate)
+      .lte("summary_date", endDate)
+      .order("summary_date", { ascending: true })
+      .order("serial_no", { ascending: true })
+      .range(from, from + pageSize - 1);
+    if (error) throw new Error(`Supabase range fetch failed: ${error.message}`);
+    const rows = Array.isArray(data) ? data : [];
+    out.push(...rows.map(rowToSummary));
+    if (rows.length < pageSize) break;
+  }
+  return out;
 }
 
 async function upsertThermostats(rows) {
@@ -940,6 +976,8 @@ function summarizeThermostatDay(thermostat, date) {
     cycleProbability,
     entryCount: entries.length,
   };
+
+  summary.metrics = computeDayMetrics(entries, isOccupiedBySetpoints);
 
   // If setpoints never change, assume space stayed unoccupied to avoid inflating occupancy
   if (

@@ -24,7 +24,7 @@ export default function WeeklyRuntimeChart({ devices }) {
         labels,
         datasets: [
           {
-            label: "Total Runtime (min)",
+            label: "CO Scheduled (min)",
             data,
             borderColor: "rgb(16, 185, 129)",
             backgroundColor: "rgba(16, 185, 129, 0.2)",

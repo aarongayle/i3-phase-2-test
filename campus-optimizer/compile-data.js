@@ -9,6 +9,11 @@ import {
   getReportDates,
   getUnits,
 } from "./co-api.js";
+import {
+  reportDateKey,
+  scheduledMinutesByDevice,
+  weeklyTotals,
+} from "../lib/co-scheduled-minutes.js";
 
 dotenv.config();
 
@@ -65,40 +70,29 @@ async function main() {
       sumRuntimeMin: 0,
       sumRamptimeMin: 0,
       daysCounted: 0,
-      RuntimeWeekly: [],
-      RamptimeWeekly: [],
+      RuntimeDaily: [],
+      RamptimeDaily: [],
       Runtime: 0,
       Ramptime: 0,
     });
   });
 
   schedulesByDate.forEach((daySchedules, dayIndex) => {
-    const dateString = sortedDates[dayIndex];
+    const dateString = reportDateKey(sortedDates[dayIndex]);
+    // CO returns several days of events per report date; count only this day.
+    const minutesByDevice = scheduledMinutesByDevice(daySchedules, dateString);
     devices.forEach((device) => {
-      const scheduleForDevice = daySchedules.filter(
-        (s) => s.DeviceId === device.Id
-      );
-      const runtimeMin =
-        scheduleForDevice.reduce(
-          (acc, curr) => acc + (curr.EndDateEpoch - curr.StartDateEpoch),
-          0
-        ) /
-        1000 /
-        60;
-      const ramptimeMin = scheduleForDevice.reduce(
-        (acc, curr) => acc + (curr.RampTime || 0),
-        0
-      );
+      const day = minutesByDevice.get(device.Id);
+      const runtimeMin = day?.scheduledMinutes ?? 0;
+      const ramptimeMin = day?.rampMinutes ?? 0;
 
       const agg = deviceAggregates.get(device.Id);
       agg.sumRuntimeMin += runtimeMin;
       agg.sumRamptimeMin += ramptimeMin;
       agg.daysCounted += 1;
 
-      if (dayIndex % 7 === 0) {
-        agg.RuntimeWeekly.push({ date: dateString, minutes: runtimeMin });
-        agg.RamptimeWeekly.push({ date: dateString, minutes: ramptimeMin });
-      }
+      agg.RuntimeDaily.push({ date: dateString, minutes: runtimeMin });
+      agg.RamptimeDaily.push({ date: dateString, minutes: ramptimeMin });
 
       if (dayIndex === schedulesByDate.length - 1) {
         agg.Runtime = runtimeMin;
@@ -119,8 +113,10 @@ async function main() {
       Ramptime: agg.Ramptime,
       RuntimeAvg: agg.sumRuntimeMin / days,
       RamptimeAvg: agg.sumRamptimeMin / days,
-      RuntimeWeekly: agg.RuntimeWeekly,
-      RamptimeWeekly: agg.RamptimeWeekly,
+      RuntimeDaily: agg.RuntimeDaily,
+      RamptimeDaily: agg.RamptimeDaily,
+      RuntimeWeekly: weeklyTotals(agg.RuntimeDaily),
+      RamptimeWeekly: weeklyTotals(agg.RamptimeDaily),
     };
   });
 
@@ -146,6 +142,8 @@ async function main() {
       ramptimeAvgMin: d.RamptimeAvg,
       runtimeLatestMin: d.Runtime,
       ramptimeLatestMin: d.Ramptime,
+      runtimeDaily: d.RuntimeDaily,
+      ramptimeDaily: d.RamptimeDaily,
       runtimeWeekly: d.RuntimeWeekly,
       ramptimeWeekly: d.RamptimeWeekly,
     })),

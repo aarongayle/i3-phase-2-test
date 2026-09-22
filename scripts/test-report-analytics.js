@@ -14,13 +14,17 @@ const mockFullData = {
         name: "Gym RTU-1",
         runtimeAvgMin: 980,
         ramptimeAvgMin: 400,
-        runtimeWeekly: [{ date: "2026-04-07", minutes: 900 }],
+        runtimeDaily: [{ date: "2026-04-07", minutes: 900 }],
+        runtimeWeekly: [{ date: "2026-04-06", minutes: 900 }],
       },
       {
+        // CO and Pelican names differ; the serial links them.
         name: "Office RTU-2",
+        pelicanSerialNo: " T-2 ",
         runtimeAvgMin: 200,
         ramptimeAvgMin: 20,
-        runtimeWeekly: [{ date: "2026-04-07", minutes: 180 }],
+        runtimeDaily: [{ date: "2026-04-07", minutes: 180 }],
+        runtimeWeekly: [{ date: "2026-04-06", minutes: 180 }],
       },
     ],
     energy: {
@@ -57,6 +61,14 @@ const mockFullData = {
           fanMinutes: 100,
           thermostatCount: 1,
         },
+        {
+          // No CO data for this day: must not count as unscheduled runtime.
+          date: "2026-04-08",
+          occupancyMinutes: 480,
+          runtimeMinutes: 700,
+          fanMinutes: 100,
+          thermostatCount: 1,
+        },
       ],
       dailySetpoints: [],
       thermostats: [
@@ -73,6 +85,14 @@ const mockFullData = {
             unoccupiedCool: 78,
             unoccupiedHeat: 65,
           },
+        },
+        {
+          serialNo: "T-2",
+          name: "MS - 229",
+          runtimeMinutes: 2750,
+          fanMinutes: 0,
+          occupancyMinutes: 5000,
+          runtimeByOccupancy: 55,
         },
       ],
       buildings: [],
@@ -107,6 +127,19 @@ if ((analytics.reports[0].meters[0].delta ?? 0) <= 0) {
 }
 if (!analytics.reports[0].imageKeys.includes("topRuntime")) {
   throw new Error("Expected captured image keys to be preserved");
+}
+const office = analytics.reports[0].devices.find((d) => d.deviceName === "Office RTU-2");
+if (office?.pelicanId !== "T-2" || office?.runtimePercent !== 55) {
+  throw new Error(
+    `Expected Office RTU-2 linked to Pelican T-2 by serial, got ${JSON.stringify(office)}`
+  );
+}
+const unscheduled =
+  analytics.reports[0].scheduleCompliance?.unscheduledRuntimeMinutes;
+if (unscheduled !== 0) {
+  throw new Error(
+    `Expected days without CO data to be skipped, got ${unscheduled} unscheduled minutes`
+  );
 }
 
 console.log("OK");

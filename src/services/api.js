@@ -2,6 +2,12 @@
  * API service for fetching report data from separate endpoints
  */
 
+import {
+  reportDateKey,
+  scheduledMinutesByDevice,
+  weeklyTotals,
+} from "../../lib/co-scheduled-minutes.js";
+
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "/api";
 
 /**
@@ -388,8 +394,8 @@ function aggregateDeviceMetrics(devices, dates, units, historyData) {
       sumRuntimeMin: 0,
       sumRamptimeMin: 0,
       daysCounted: 0,
-      runtimeWeekly: [],
-      ramptimeWeekly: [],
+      runtimeDaily: [],
+      ramptimeDaily: [],
       runtimeLatest: 0,
       ramptimeLatest: 0,
     });
@@ -397,34 +403,22 @@ function aggregateDeviceMetrics(devices, dates, units, historyData) {
 
   // Process each day's schedules
   historyData.history.forEach(({ date, schedules }, dayIndex) => {
+    const dateKey = reportDateKey(date);
+    // CO returns several days of events per report date; count only this day.
+    const minutesByDevice = scheduledMinutesByDevice(schedules, dateKey);
+
     devices.forEach((device) => {
-      const scheduleForDevice = (schedules || []).filter(
-        (s) => s.DeviceId === device.Id
-      );
-
-      const runtimeMin =
-        scheduleForDevice.reduce(
-          (acc, curr) => acc + (curr.EndDateEpoch - curr.StartDateEpoch),
-          0
-        ) /
-        1000 /
-        60;
-
-      const ramptimeMin = scheduleForDevice.reduce(
-        (acc, curr) => acc + (curr.RampTime || 0),
-        0
-      );
+      const day = minutesByDevice.get(device.Id);
+      const runtimeMin = day?.scheduledMinutes ?? 0;
+      const ramptimeMin = day?.rampMinutes ?? 0;
 
       const agg = deviceAggregates.get(device.Id);
       agg.sumRuntimeMin += runtimeMin;
       agg.sumRamptimeMin += ramptimeMin;
       agg.daysCounted += 1;
 
-      // Collect weekly samples (every 7th day)
-      if (dayIndex % 7 === 0) {
-        agg.runtimeWeekly.push({ date, minutes: runtimeMin });
-        agg.ramptimeWeekly.push({ date, minutes: ramptimeMin });
-      }
+      agg.runtimeDaily.push({ date: dateKey, minutes: runtimeMin });
+      agg.ramptimeDaily.push({ date: dateKey, minutes: ramptimeMin });
 
       // Latest day values
       if (dayIndex === historyData.history.length - 1) {
@@ -446,8 +440,10 @@ function aggregateDeviceMetrics(devices, dates, units, historyData) {
       ramptimeAvgMin: agg.sumRamptimeMin / days,
       runtimeLatestMin: agg.runtimeLatest,
       ramptimeLatestMin: agg.ramptimeLatest,
-      runtimeWeekly: agg.runtimeWeekly,
-      ramptimeWeekly: agg.ramptimeWeekly,
+      runtimeDaily: agg.runtimeDaily,
+      ramptimeDaily: agg.ramptimeDaily,
+      runtimeWeekly: weeklyTotals(agg.runtimeDaily),
+      ramptimeWeekly: weeklyTotals(agg.ramptimeDaily),
     };
   });
 }

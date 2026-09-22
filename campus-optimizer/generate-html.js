@@ -121,7 +121,7 @@ export function buildHtml(data) {
   const coDateSet = new Set();
   const coDailyMap = new Map();
   devices.forEach((d) =>
-    (d.runtimeWeekly || []).forEach((p) => {
+    (d.runtimeDaily || []).forEach((p) => {
       coDateSet.add(p.date);
       coDailyMap.set(p.date, (coDailyMap.get(p.date) || 0) + (p.minutes || 0));
     })
@@ -400,13 +400,13 @@ export function buildHtml(data) {
 
     <section class="grid grid-cols-1 md:grid-cols-2 gap-6">
       <div class="card min-h-[360px]">
-        <h2 class="text-lg font-semibold mb-2">Top 10 Devices by Avg Runtime (min)</h2>
+        <h2 class="text-lg font-semibold mb-2">Top 10 Devices by Avg CO Scheduled Time (min/day)</h2>
         <div class="h-72">
           <canvas id="barTopRuntime" style="min-height:260px;"></canvas>
         </div>
       </div>
       <div class="card min-h-[360px]">
-        <h2 class="text-lg font-semibold mb-2">Total Runtime per Week (min)</h2>
+        <h2 class="text-lg font-semibold mb-2">CO Scheduled Time per Week (min)</h2>
         <div class="h-72">
           <canvas id="lineWeekly" style="min-height:260px;"></canvas>
         </div>
@@ -621,7 +621,8 @@ export function buildHtml(data) {
 
     const pelicanDates = ${JSON.stringify(combinedDates)};
     const pelicanCOValues = ${JSON.stringify(
-      combinedDates.map((d) => round2(coDailyMap.get(d) || 0))
+      // No CO data for a day is a gap, not zero scheduled minutes.
+      combinedDates.map((d) => round2OrNull(coDailyMap.get(d)))
     )};
     const pelicanOccValues = ${JSON.stringify(
       combinedDates.map((d) => round2(pelicanDailyMap.get(d)?.occupancyMinutes || 0))
@@ -633,19 +634,19 @@ export function buildHtml(data) {
     const setpointLabelsRaw = ${JSON.stringify(pelicanSetpointLabels)};
     const setpointLabels = setpointLabelsRaw.map((d) => formatLabel(d));
     const setpointOccHeat = ${JSON.stringify(
-      pelicanDailySetpoints.map((d) => round2(d.occupiedHeat ?? null))
+      pelicanDailySetpoints.map((d) => round2OrNull(d.occupiedHeat))
     )};
     const setpointUnoccHeat = ${JSON.stringify(
-      pelicanDailySetpoints.map((d) => round2(d.unoccupiedHeat ?? null))
+      pelicanDailySetpoints.map((d) => round2OrNull(d.unoccupiedHeat))
     )};
     const setpointOccCool = ${JSON.stringify(
-      pelicanDailySetpoints.map((d) => round2(d.occupiedCool ?? null))
+      pelicanDailySetpoints.map((d) => round2OrNull(d.occupiedCool))
     )};
     const setpointUnoccCool = ${JSON.stringify(
-      pelicanDailySetpoints.map((d) => round2(d.unoccupiedCool ?? null))
+      pelicanDailySetpoints.map((d) => round2OrNull(d.unoccupiedCool))
     )};
     const setpointDeadband = ${JSON.stringify(
-      pelicanDailySetpoints.map((d) => round2(d.deadband ?? null))
+      pelicanDailySetpoints.map((d) => round2OrNull(d.deadband))
     )};
 
     const barCtx = document.getElementById('barTopRuntime');
@@ -654,7 +655,7 @@ export function buildHtml(data) {
       data: {
         labels: topRuntimeLabels,
         datasets: [{
-          label: 'Runtime Avg (min)',
+          label: 'Avg CO Scheduled (min/day)',
           data: topRuntimeData,
           backgroundColor: 'rgba(59, 130, 246, 0.6)'
         }]
@@ -672,7 +673,7 @@ export function buildHtml(data) {
       data: {
         labels: weeklyLabels,
         datasets: [{
-          label: 'Total Runtime (min)',
+          label: 'CO Scheduled (min)',
           data: weeklyValues,
           borderColor: 'rgb(16, 185, 129)',
           backgroundColor: 'rgba(16, 185, 129, 0.2)',
@@ -960,6 +961,10 @@ export function buildHtml(data) {
 
 function round2(n) {
   return Math.round((n || 0) * 100) / 100;
+}
+/** Like round2, but keeps missing values as null so charts show a gap. */
+function round2OrNull(n) {
+  return n == null || !Number.isFinite(Number(n)) ? null : round2(Number(n));
 }
 function fmt(n) {
   return (n ?? 0).toLocaleString(undefined, { maximumFractionDigits: 2 });
