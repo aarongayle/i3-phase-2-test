@@ -187,17 +187,12 @@ export async function generateHeadlessReportImage({
 
   progress("start", "Starting headless report generation", { clientId });
 
-  const compiledCachePath = path.resolve(
-    `./campus-optimizer/data/compiled-${String(clientId).trim()}.json`
-  );
-  const hasCompiledCache = useCache && fs.existsSync(compiledCachePath);
-
-  // Never overwrite the canonical precomputed compiled file from headless.
-  // Only use a bounded rebuild window when there is no compiled cache to load.
+  // Never overwrite the canonical precomputed compiled file from headless. A current
+  // compiled file is used as is; otherwise rebuild over a bounded window.
   const compiled = await buildCompiledReport(clientId, {
     useCache,
     saveJson: false,
-    reportWindowDays: hasCompiledCache ? undefined : reportWindowDays,
+    reportWindowDays,
     onProgress: (payload) =>
       progress(payload?.stage || "compile", payload?.message, payload),
   });

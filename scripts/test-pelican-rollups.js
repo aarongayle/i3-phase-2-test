@@ -75,4 +75,20 @@ const occupied = (e) => Number(e.coolSetting) < 85 || Number(e.heatSetting) > 55
   assert.deepEqual(r.rawMetricsCoverage, { days: 1, firstDate: "2026-08-26" });
 }
 
+// --- older cached days with blank names/groups (Beeville backfill) -----------
+{
+  const day = (date, serialNo, name, groupName, heatH, metrics) => ({
+    date, serialNo, name, groupName, coolRuntime: 0, heatRuntime: heatH * 3600, occupiedTime: 10 * 3600, entryCount: 10, metrics,
+  });
+  const r = buildPelicanRollups([
+    day("2026-01-05", "A", "", "", 2),
+    day("2026-02-05", "A", "JH-305 old", "300s", 2),
+    day("2026-03-05", "A", "JH-305", "300s", 2),
+    day("2026-01-05", "LOOP", "", "", 0),
+    day("2026-03-05", "LOOP", "CHW", "HIDDEN", 0, { loop: { supplyDaytimeAvg: 50, returnDaytimeAvg: 55, supplyMin: 44 } }),
+  ]);
+  assert.deepEqual(r.units.map((u) => [u.serialNo, u.name, u.groupName]), [["A", "JH-305", "300s"]], "latest name, blank days, no plant sensor");
+  assert.ok(r.monthly.every((m) => m.groupName === "300s"), "blank-group days count under the unit's group");
+}
+
 console.log("pelican rollups tests: OK");
