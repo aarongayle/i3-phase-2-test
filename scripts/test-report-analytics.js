@@ -102,7 +102,7 @@ const mockFullData = {
 };
 
 const analytics = buildReportAnalytics(mockFullData, {
-  capturedImageIds: ["topRuntime", "dailyPeakDemand"],
+  capturedImageIds: ["dailyEnergyUse", "topRuntime"],
 });
 const meta = enrichStreamMeta(mockFullData.report.meta, mockFullData.report, {
   clientName: "Beeville — Example ISD",
@@ -125,8 +125,11 @@ if (!analytics || analytics.version !== 1) {
 if ((analytics.reports[0].meters[0].delta ?? 0) <= 0) {
   throw new Error("Expected positive meter delta for overage case");
 }
-if (!analytics.reports[0].imageKeys.includes("topRuntime")) {
+if (!analytics.reports[0].imageKeys.includes("dailyEnergyUse")) {
   throw new Error("Expected captured image keys to be preserved");
+}
+if (analytics.reports[0].imageKeys.includes("topRuntime")) {
+  throw new Error("Dropped charts must not be listed as report images");
 }
 const office = analytics.reports[0].devices.find((d) => d.deviceName === "Office RTU-2");
 if (office?.pelicanId !== "T-2" || office?.runtimePercent !== 55) {

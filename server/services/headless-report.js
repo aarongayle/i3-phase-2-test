@@ -22,39 +22,24 @@ import {
   loadPelicanHistoryForSiteDate,
 } from "../routes/pelican-history.js";
 import { buildPelicanRollups } from "../../lib/pelican-rollups.js";
+import { buildReportInsights } from "../../lib/report-insights.js";
+import { buildSetbackAudit, fetchThermostatSchedules } from "../../lib/pelican-setbacks.js";
 
 // History for rollups comes from the Supabase cache only, so it doesn't slow reports.
 const PELICAN_ROLLUP_DAYS = Number(process.env.PELICAN_ROLLUP_DAYS || 365);
 
 const DEFAULT_OUT_DIR = path.resolve("./campus-optimizer/reports/headless");
 const DEFAULT_PELICAN_DAYS = DEFAULT_REPORT_WINDOW_DAYS;
+// Charts sent to chat. Dropped: top runtime and weekly runtime (CO scheduled
+// minutes, not equipment runtime), schedule vs occupancy (compares two unlike
+// measures), the latest-day interval (one day, often a weekend), and site daily
+// peak demand (replaced by per-meter peaks with startup flags in `insights`).
 const SPLIT_IMAGE_TARGETS = [
-  { id: "topRuntime", selector: "#barTopRuntime", label: "Top runtime" },
-  {
-    id: "weeklyRuntime",
-    selector: "#lineWeekly",
-    label: "Weekly runtime",
-  },
   { id: "dailyEnergyUse", selector: "#lineEnergy", label: "Daily energy use" },
-  {
-    id: "dailyPeakDemand",
-    selector: "#linePeakDemand",
-    label: "Daily peak demand",
-  },
-  {
-    id: "scheduleVsOccupancy",
-    selector: "#pelicanComparison",
-    label: "Schedule vs occupancy",
-  },
   {
     id: "setpointTrends",
     selector: "#pelicanSetpoints",
     label: "Setpoint trends",
-  },
-  {
-    id: "intervalLatestDay",
-    selector: "#lineIntervalLatest",
-    label: "Interval latest day",
   },
   {
     id: "intervalAverageDay",
@@ -226,7 +211,20 @@ export async function generateHeadlessReportImage({
   );
   progress("pelican-done", "Pelican analytics loaded");
 
-  const fullData = { ...compiled, pelican };
+  // Per-meter demand/baseload, demand targets, buildings, and client-entered
+  // events. Optional: the report still goes out without them.
+  let insights = null;
+  try {
+    insights = await buildReportInsights(clientId, {
+      report: compiled.report,
+      onProgress: (payload) => progress(payload?.stage || "insights", payload?.message, payload),
+    });
+  } catch (insightsErr) {
+    console.warn("[headless-report] Insights failed:", insightsErr.message);
+    progress("insights-error", insightsErr.message);
+  }
+
+  const fullData = { ...compiled, pelican, insights };
   const streamMeta = enrichStreamMeta(compiled.report?.meta || {}, compiled.report, {
     clientName,
   });
@@ -238,6 +236,7 @@ export async function generateHeadlessReportImage({
       report: compiled.report,
       dateRange: streamMeta.dateRange,
       windowDays: reportWindowDays,
+      timeZone: compiled.report?.meta?.timeZone,
     });
     if (schedules) {
       const bytes = Buffer.byteLength(JSON.stringify(schedules), "utf8");
@@ -490,8 +489,9 @@ async function loadPelicanAnalytics(
     });
     progress("pelican-analytics", "Pelican analytics calculated");
 
-    const rollups = await loadPelicanRollups(clientId, sites, thermostats, dates, progress);
-    return { analytics, rollups, sites, days };
+    const { rollups, rows } = await loadPelicanRollups(clientId, sites, thermostats, dates, progress);
+    const setbacks = await loadSetbackAudit(buildings, sites, rows, dates[dates.length - 1], progress);
+    return { analytics, rollups, setbacks, sites, days };
   } catch (err) {
     console.warn("[headless-report] Pelican analytics failed:", err.message);
     onProgress?.({
@@ -518,14 +518,43 @@ async function loadPelicanRollups(clientId, sites, windowRows, windowDates, prog
       for (const row of cached) add({ ...row, siteSlug });
     }
     for (const row of windowRows) add(row);
-    const rollups = buildPelicanRollups(Array.from(byKey.values()), { start, end });
+    const rows = Array.from(byKey.values());
+    const rollups = buildPelicanRollups(rows, { start, end });
     progress("pelican-rollups", "Pelican rollups built", {
       days: rollups?.window?.days ?? 0,
       units: rollups?.units?.length ?? 0,
     });
-    return rollups;
+    return { rollups, rows };
   } catch (err) {
     console.warn("[headless-report] Pelican rollups failed:", err.message);
+    return { rollups: null, rows: windowRows };
+  }
+}
+
+/**
+ * What every thermostat sets back to overnight, from daily history, plus each
+ * one's Pelican background schedule name and on/off (lib/pelican-setbacks.js).
+ */
+async function loadSetbackAudit(buildings, sites, rows, end, progress) {
+  try {
+    const schedulesBySerial = new Map();
+    for (const siteSlug of sites) {
+      const building = (buildings || []).find(
+        (b) => String(b?.PelicanSubdomain || "").trim().toLowerCase() === siteSlug.toLowerCase() && b?.PelicanUsername
+      );
+      if (!building) continue;
+      try {
+        const schedules = await fetchThermostatSchedules(siteSlug, building.PelicanUsername, building.PelicanPassword);
+        for (const [serial, sched] of schedules) schedulesBySerial.set(serial, sched);
+      } catch (err) {
+        console.warn(`[headless-report] Pelican schedules ${siteSlug} failed: ${err.message}`);
+      }
+    }
+    const audit = buildSetbackAudit(rows, { end, schedulesBySerial });
+    progress("pelican-setbacks", "Thermostat setbacks checked", { units: audit.units.rows.length });
+    return audit;
+  } catch (err) {
+    console.warn("[headless-report] Setback audit failed:", err.message);
     return null;
   }
 }
